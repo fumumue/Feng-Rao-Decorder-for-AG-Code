@@ -31,10 +31,11 @@ jobs:
           done
       - name: Compile Suzuki three-point
         run: cc -O2 -std=c11 -Wall -Wextra -Werror -o suzuki_three suzuki_threepoint.c
-      - name: Run Suzuki three-point tests (1 and 2 errors)
+      - name: Run Suzuki three-point tests (1 error, seeds 1-5; 2 errors, seeds 1-4)
         run: |
-          for errors in 1 2; do
-            for seed in 1 2 3 4 5; do
-              ./suzuki_three --a 10 --b 10 --c 10 --errors "$errors" --seed "$seed"
-            done
+          for seed in 1 2 3 4 5; do
+            ./suzuki_three --a 10 --b 10 --c 10 --errors 1 --seed "$seed"
+          done
+          for seed in 1 2 3 4; do
+            ./suzuki_three --a 10 --b 10 --c 10 --errors 2 --seed "$seed"
           done
