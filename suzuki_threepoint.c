@@ -341,7 +341,7 @@ int main(int argc,char **argv)
         fprintf(stderr,"Constant function missing from the constructed spaces.\\n");
         return EXIT_FAILURE;
     }
-    uint8_t H[MAX_RR*N]={{0}};
+    uint8_t H[MAX_RR*N]={0};
     for (int r=0;r<m;++r) memcpy(H+r*N,basis_2g[r].value,N);
     uint8_t code_kernel[N][N]={{0}};
     int code_dim=nullspace(H,m,N,code_kernel);
@@ -365,7 +365,7 @@ int main(int argc,char **argv)
         err_pos[e]=p; err_val[e]=(uint8_t)(1+rand()%7);
         error[p]=err_val[e]; received[p]^=err_val[e];
     }
-    uint8_t S[MAX_RR*MAX_RR]={{0}};
+    uint8_t S[MAX_RR*MAX_RR]={0};
     for (int i=0;i<k;++i) for (int j=0;j<k;++j) {
         uint8_t z=0;
         for (int p=0;p<N;++p)
@@ -394,7 +394,7 @@ int main(int argc,char **argv)
         fprintf(stderr,"This parameter/seed is outside the demonstrated decoding range.\\n");
         return EXIT_FAILURE;
     }
-    uint8_t aug[MAX_ERRORS*(MAX_ERRORS+1)]={{0}};
+    uint8_t aug[MAX_ERRORS*(MAX_ERRORS+1)]={0};
     for (int r=0;r<errors;++r) {
         for (int c=0;c<errors;++c) aug[r*(errors+1)+c]=basis_g[r].value[decoded[c]];
         uint8_t z=0;
