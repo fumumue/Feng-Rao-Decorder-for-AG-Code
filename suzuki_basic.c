@@ -199,8 +199,6 @@ int main(void)
     uint8_t error_positions[ERROR_COUNT] = {5, 23, 51};
     uint8_t injected_values[ERROR_COUNT] = {7, 11, 29};
     uint8_t decoded_values[ERROR_COUNT] = {0};
-    int rank_h_pivots[MAX_CHECKS] = {0};
-    int syndrome_pivots[MAX_CHECKS] = {0};
 
     /* Enumerate all affine points on y^8+y=x^2(x^8+x). */
     for (int x = 0; x < FIELD_SIZE; ++x) {
