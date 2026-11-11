@@ -96,7 +96,7 @@ static void generator_values(uint8_t x, uint8_t y, uint8_t vals[22])
     uint8_t x2=gf_mul(x,x), x5=gf_mul(gf_mul(x2,x2),x);
     uint8_t v=y4^x5;
     uint8_t w=gf_mul(x,y4)^gf_pow(v,4);
-    if (w==0) { fprintf(stderr,"Internal error: denominator vanishes on support.\\n"); exit(EXIT_FAILURE); }
+    if (w==0) { fprintf(stderr,"Internal error: denominator vanishes on support.\n"); exit(EXIT_FAILURE); }
     uint8_t iw=gf_inv(w), iw2=gf_mul(iw,iw), iw3=gf_mul(iw2,iw);
     vals[0]=gf_mul(v,iw); vals[1]=gf_mul(y,iw);
     vals[2]=gf_mul(x,iw); vals[3]=iw;
@@ -126,7 +126,7 @@ static void make_points_and_generators(Point points[N], Generator gen[22], Gener
         if ((x==0 && y==0) || (x==0 && y==1)) continue;
         points[np++]=(Point){(uint8_t)x,(uint8_t)y};
     }
-    if (np!=N) { fprintf(stderr,"Unexpected support size: %d\\n",np); exit(EXIT_FAILURE); }
+    if (np!=N) { fprintf(stderr,"Unexpected support size: %d\n",np); exit(EXIT_FAILURE); }
     static const int aa[4]={8,10,12,13};
     static const int bb[4]={8,10,12,13};
     static const int gp[14][2]={{1,27},{2,19},{3,11},{4,17},{5,9},{6,15},{7,7},
@@ -317,13 +317,13 @@ int main(int argc,char **argv)
         } else if (!strcmp(argv[i],"--seed")&&i+1<argc) {
             if (!parse_int_arg(argv[++i],&seed)) return 2;
         } else if (!strcmp(argv[i],"--help")||!strcmp(argv[i],"-h")) {
-            printf("Usage: %s [--a N] [--b N] [--c N] [--errors T] [--seed N]\\n",argv[0]);
-            printf("G = a P00 + b P01 + c Pinf; default: --a 10 --b 10 --c 10 --errors 2\\n");
+            printf("Usage: %s [--a N] [--b N] [--c N] [--errors T] [--seed N]\n",argv[0]);
+            printf("G = a P00 + b P01 + c Pinf; default: --a 10 --b 10 --c 10 --errors 2\n");
             return 0;
-        } else { fprintf(stderr,"Unknown or incomplete argument: %s\\n",argv[i]); return 2; }
+        } else { fprintf(stderr,"Unknown or incomplete argument: %s\n",argv[i]); return 2; }
     }
     if (A<0||B<0||C<0||A+B+C>60||errors<1||errors>MAX_ERRORS) {
-        fprintf(stderr,"Require a,b,c >= 0, a+b+c <= 60, and 1 <= errors <= %d.\\n",MAX_ERRORS);
+        fprintf(stderr,"Require a,b,c >= 0, a+b+c <= 60, and 1 <= errors <= %d.\n",MAX_ERRORS);
         return EXIT_FAILURE;
     }
     Point points[N]; Generator gen[22],shifted[22];
@@ -332,27 +332,27 @@ int main(int argc,char **argv)
     int k=build_three_basis(A,B,C,gen,shifted,basis_g);
     int m=build_three_basis(2*A,2*B,2*C,gen,shifted,basis_2g);
     if (k<=errors || m<=0 || m>=N) {
-        fprintf(stderr,"RR subspace dimensions unsuitable: dim U=%d, dim U2=%d.\\n",k,m);
-        fprintf(stderr,"Try different a,b,c (with a+b+c <= 60) or fewer errors.\\n");
+        fprintf(stderr,"RR subspace dimensions unsuitable: dim U=%d, dim U2=%d.\n",k,m);
+        fprintf(stderr,"Try different a,b,c (with a+b+c <= 60) or fewer errors.\n");
         return EXIT_FAILURE;
     }
     if (basis_g[0].a||basis_g[0].b||basis_g[0].c||
         basis_2g[0].a||basis_2g[0].b||basis_2g[0].c) {
-        fprintf(stderr,"Constant function missing from the constructed spaces.\\n");
+        fprintf(stderr,"Constant function missing from the constructed spaces.\n");
         return EXIT_FAILURE;
     }
     uint8_t H[MAX_RR*N]={0};
     for (int r=0;r<m;++r) memcpy(H+r*N,basis_2g[r].value,N);
     uint8_t code_kernel[N][N]={{0}};
     int code_dim=nullspace(H,m,N,code_kernel);
-    if (code_dim<=0) { fprintf(stderr,"The evaluation code has zero dimension.\\n"); return EXIT_FAILURE; }
+    if (code_dim<=0) { fprintf(stderr,"The evaluation code has zero dimension.\n"); return EXIT_FAILURE; }
     uint8_t codeword[N]={0},received[N]={0},error[N]={0};
     for (int p=0;p<N;++p) {
         codeword[p]=code_kernel[0][p];
         if (code_dim>1) codeword[p]^=gf_mul(2,code_kernel[1][p]);
         if (code_dim>2) codeword[p]^=gf_mul(3,code_kernel[2][p]);
     }
-    if (!check_word(H,m,codeword)) { fprintf(stderr,"Codeword check failed.\\n"); return EXIT_FAILURE; }
+    if (!check_word(H,m,codeword)) { fprintf(stderr,"Codeword check failed.\n"); return EXIT_FAILURE; }
     memcpy(received,codeword,N);
     srand((unsigned)seed);
     int err_pos[MAX_ERRORS]; uint8_t err_val[MAX_ERRORS];
@@ -374,7 +374,7 @@ int main(int argc,char **argv)
     }
     uint8_t syndrome_kernel[N][N]={{0}};
     int sk=nullspace(S,k,k,syndrome_kernel);
-    if (sk<=0) { fprintf(stderr,"Syndrome matrix has trivial kernel; decoding failed.\\n"); return EXIT_FAILURE; }
+    if (sk<=0) { fprintf(stderr,"Syndrome matrix has trivial kernel; decoding failed.\n"); return EXIT_FAILURE; }
     int decoded[MAX_ERRORS],nd=0;
     for (int p=0;p<N;++p) {
         int common_zero=1;
@@ -390,8 +390,8 @@ int main(int argc,char **argv)
         }
     }
     if (nd!=errors) {
-        fprintf(stderr,"Locator found %d candidates; injected errors=%d.\\n",nd,errors);
-        fprintf(stderr,"This parameter/seed is outside the demonstrated decoding range.\\n");
+        fprintf(stderr,"Locator found %d candidates; injected errors=%d.\n",nd,errors);
+        fprintf(stderr,"This parameter/seed is outside the demonstrated decoding range.\n");
         return EXIT_FAILURE;
     }
     uint8_t aug[MAX_ERRORS*(MAX_ERRORS+1)]={0};
@@ -404,30 +404,30 @@ int main(int argc,char **argv)
     }
     int piv[MAX_ERRORS]={0};
     int rank=rref(aug,errors,errors+1,piv);
-    if (rank!=errors) { fprintf(stderr,"Error-value system is singular.\\n"); return EXIT_FAILURE; }
+    if (rank!=errors) { fprintf(stderr,"Error-value system is singular.\n"); return EXIT_FAILURE; }
     uint8_t corrected[N]; memcpy(corrected,received,N);
     uint8_t decoded_values[MAX_ERRORS];
     for (int e=0;e<errors;++e) {
-        if (piv[e]!=e) { fprintf(stderr,"Unexpected pivot layout.\\n"); return EXIT_FAILURE; }
+        if (piv[e]!=e) { fprintf(stderr,"Unexpected pivot layout.\n"); return EXIT_FAILURE; }
         decoded_values[e]=aug[e*(errors+1)+errors];
         corrected[decoded[e]]^=decoded_values[e];
     }
     if (memcmp(corrected,codeword,N)!=0||!check_word(H,m,corrected)) {
-        fprintf(stderr,"Correction verification failed.\\n"); return EXIT_FAILURE;
+        fprintf(stderr,"Correction verification failed.\n"); return EXIT_FAILURE;
     }
     puts("Three-point Suzuki AG-derived code / basic syndrome-matrix decoder");
     puts("Curve: y^8 + y = x^10 + x^3 over GF(8)");
-    printf("Divisor G = %d P00 + %d P01 + %d Pinf; support n=%d\\n",A,B,C,N);
-    printf("Constructed RR subspace dimensions: dim U=%d, dim U2=%d\\n",k,m);
-    printf("Code dimension=%d; syndrome rank=%d; kernel dimension=%d\\n",code_dim,k-sk,sk);
-    puts("\\nEvaluation support (index : (x,y)):");
-    for (int p=0;p<N;++p) printf("%2d : (%u,%u)%s",p,points[p].x,points[p].y,(p%4==3||p==N-1)?"\\n":"   ");
+    printf("Divisor G = %d P00 + %d P01 + %d Pinf; support n=%d\n",A,B,C,N);
+    printf("Constructed RR subspace dimensions: dim U=%d, dim U2=%d\n",k,m);
+    printf("Code dimension=%d; syndrome rank=%d; kernel dimension=%d\n",code_dim,k-sk,sk);
+    puts("\nEvaluation support (index : (x,y)):");
+    for (int p=0;p<N;++p) printf("%2d : (%u,%u)%s",p,points[p].x,points[p].y,(p%4==3||p==N-1)?"\n":"   ");
     puts("Injected errors (index : point : value):");
     for (int e=0;e<errors;++e)
-        printf("%d : (%u,%u) : %u\\n",err_pos[e],points[err_pos[e]].x,points[err_pos[e]].y,err_val[e]);
+        printf("%d : (%u,%u) : %u\n",err_pos[e],points[err_pos[e]].x,points[err_pos[e]].y,err_val[e]);
     puts("Decoded errors:");
     for (int e=0;e<errors;++e)
-        printf("%d : (%u,%u) : %u\\n",decoded[e],points[decoded[e]].x,points[decoded[e]].y,decoded_values[e]);
+        printf("%d : (%u,%u) : %u\n",decoded[e],points[decoded[e]].x,points[decoded[e]].y,decoded_values[e]);
     print_vector("codeword",codeword);
     print_vector("error_vector",error);
     print_vector("corrected",corrected);
