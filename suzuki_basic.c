@@ -194,7 +194,7 @@ int main(void)
     uint8_t codeword[MAX_POINTS] = {0};
     uint8_t received[MAX_POINTS] = {0};
     uint8_t evals[MAX_BASIS][MAX_POINTS] = {{0}};
-    uint8_t syndrome[MAX_BASIS][MAX_BASIS] = {{0}};
+    uint8_t syndrome[MAX_CHECKS][MAX_POINTS] = {{0}};
     uint8_t syndrome_nullspace[MAX_POINTS][MAX_POINTS] = {{0}};
     uint8_t error_positions[ERROR_COUNT] = {5, 23, 51};
     uint8_t injected_values[ERROR_COUNT] = {7, 11, 29};
@@ -333,24 +333,12 @@ int main(void)
         int common_zero = 1;
 
         for (int v = 0; v < syndrome_kernel_dim; ++v) {
-            if (dot_product(syndrome_nullspace[v], &evals[0][p],
-                            0) != 0) {
-                /* The evaluation table is row-major, so use an explicit dot. */
-                uint8_t value = 0;
-                for (int a = 0; a < basis_count; ++a)
-                    value ^= gf_mul(syndrome_nullspace[v][a], evals[a][p]);
-                if (value != 0) {
-                    common_zero = 0;
-                    break;
-                }
-            } else {
-                uint8_t value = 0;
-                for (int a = 0; a < basis_count; ++a)
-                    value ^= gf_mul(syndrome_nullspace[v][a], evals[a][p]);
-                if (value != 0) {
-                    common_zero = 0;
-                    break;
-                }
+            uint8_t value = 0;
+            for (int a = 0; a < basis_count; ++a)
+                value ^= gf_mul(syndrome_nullspace[v][a], evals[a][p]);
+            if (value != 0) {
+                common_zero = 0;
+                break;
             }
         }
 
