@@ -1,4 +1,4 @@
-name: Suzuki basic decoding demo (compile and run)
+name: Suzuki two-point AG basic decoding demo
 
 on:
   push:
@@ -6,6 +6,8 @@ on:
       - docs/miura-basic-decoding-2026-11-12
     paths:
       - "suzuki_basic.c"
+      - "suzuki_multipoint.c"
+      - "suzuki_multipoint.md"
       - ".github/workflows/suzuki-basic.yml"
   workflow_dispatch:
 
@@ -15,7 +17,16 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
-      - name: Compile demo
+      - name: Compile existing affine demo
         run: cc -O2 -std=c11 -Wall -Wextra -Werror -o suzuki_basic suzuki_basic.c
-      - name: Run demo
+      - name: Run existing affine demo
         run: ./suzuki_basic
+      - name: Compile two-point AG demo
+        run: cc -O2 -std=c11 -Wall -Wextra -Werror -o suzuki_multipoint suzuki_multipoint.c
+      - name: Run two-point AG demo (3 errors)
+        run: ./suzuki_multipoint --a 14 --b 14 --errors 3 --seed 7
+      - name: Run two-point AG demo (4 errors)
+        run: |
+          for seed in 1 2 3 4 5; do
+            ./suzuki_multipoint --a 14 --b 14 --errors 4 --seed "$seed"
+          done
