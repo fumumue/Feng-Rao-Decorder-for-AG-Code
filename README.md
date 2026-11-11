@@ -34,12 +34,9 @@ $$
 
 とすると、関数 \(f\in L(G)\) をサポート上で評価して符号語を作ります。
 
-```math
-
-\operatorname{ev}(f)
- = (f(P_1),f(P_2),\ldots,f(P_n)).
-
-```
+$
+\mathrm{ev}(f)=(f(P_1),f(P_2),\ldots,f(P_n)).
+$
 
 したがって、符号は
 
