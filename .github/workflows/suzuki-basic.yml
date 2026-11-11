@@ -1,4 +1,4 @@
-name: Suzuki basic decoding demo
+name: Suzuki basic decoding demo (compile and run)
 
 on:
   push:
