@@ -1,68 +1,83 @@
-# Suzuki curve: two-point AG code and basic syndrome decoder
+# 鈴木曲線：2点AG符号と基本シンドローム復号
 
-## What is implemented
+## 実装している内容
 
-This is a first **two-point** implementation, with
+このプログラムは、まず **2点の場合**を実装したものです。因子は
+
 \[
-G=aP_{00}+bP_\infty.
+G=aP_{00}+bP_\infty
 \]
-It is not yet a general s-point divisor with arbitrary affine places.
 
-- Curve: \(y^8-y=x^2(x^8-x)\) over \(\mathrm{GF}(8)\).
-- Field: \(\mathrm{GF}(2)[z]/(z^3+z+1)\).
-- \(P_{00}=(0,0)\) and \(P_\infty\) are the two divisor places.
-- Evaluation support: the other 63 affine rational points.
-- The code is the dual of the evaluation span of \(L(2G)\):
-  \[
-  C=\{c\in\mathrm{GF}(8)^{63}:\sum_{Q\in D}c_Qh(Q)=0
-  \text{ for every }h\in L(2G)\}.
-  \]
-  This choice makes every product \(f_if_j\), for \(f_i,f_j\in L(G)\), a parity-check function.
+です。任意のアフィン点を指定できる一般の \(s\) 点因子には、まだ対応していません。
 
-## Basic decoding
+- 曲線：\(\mathrm{GF}(8)\) 上の \(y^8-y=x^2(x^8-x)\)
+- 有限体：\(\mathrm{GF}(2)[z]/(z^3+z+1)\)
+- 因子の台：\(P_{00}=(0,0)\) と \(P_\infty\)
+- 評価点：それ以外の63個のアフィン有理点
+- 符号は \(L(2G)\) の評価関数全体に直交する符号として定義します。
 
-For a received word \(r=c+e\), form
+\[
+C=\left\{c\in\mathrm{GF}(8)^{63}:
+\sum_{Q\in D}c_Qh(Q)=0
+\quad (h\in L(2G))\right\}.
+\]
+
+この定義により、\(f_i,f_j\in L(G)\) ならば積 \(f_if_j\) は \(L(2G)\) に属し、検査式に利用できます。
+
+## 基本的な代数復号
+
+受信語を \(r=c+e\) とし、次のシンドローム行列を作ります。
+
 \[
 S_{ij}=\sum_{Q\in D}r_Q f_i(Q)f_j(Q).
 \]
-The codeword contribution vanishes. The right kernel of \(S\) gives linear combinations of the \(L(G)\) basis functions; their common zeros on the evaluation support are used as error-location candidates. Error values are then recovered from the first syndrome column by a finite-field linear system.
 
-The implementation constructs the two-point Riemann--Roch spaces from the two-point Weierstrass semigroup data for the \(q=8\) Suzuki function field, and keeps linearly independent evaluation functions. The pair-gap generators and corresponding functions are based on the two-point semigroup description in Gretchen L. Matthews, *Codes from the Suzuki Function Field*.
+符号語の寄与はゼロになるため、行列 \(S\) の右核から \(L(G)\) の基底関数の線形結合が得られます。それらの関数が評価点上で共通にゼロとなる点を、誤り位置の候補として調べます。その後、シンドロームの最初の列を使い、有限体上の連立一次方程式を解いて誤り値を求めます。
 
-## Build and run
+\(q=8\) の鈴木関数体について、2点Weierstrass半群のデータを利用して2点Riemann–Roch空間を構成し、評価ベクトルが一次独立な関数を選びます。2点半群のギャップ生成元と対応する関数は、Gretchen L. Matthews の論文 *Codes from the Suzuki Function Field* に記載された2点半群の説明に基づいています。
 
-\`\`\`sh
+## コンパイルと実行
+
+```sh
 cc -O2 -std=c11 -Wall -Wextra -o suzuki_multipoint suzuki_multipoint.c
 ./suzuki_multipoint
-\`\`\`
+```
 
-The default run is equivalent to:
+初期設定での実行は、次のコマンドと同じです。
 
-\`\`\`sh
+```sh
 ./suzuki_multipoint --a 14 --b 14 --errors 3 --seed 7
-\`\`\`
+```
 
-Options:
+### コマンドライン引数
 
-- \`--a N\`: coefficient of \(P_{00}\) in \(G\)
-- \`--b N\`: coefficient of \(P_\infty\) in \(G\)
-- \`--errors T\`: number of nonzero error coordinates to inject (1--12)
-- \`--seed N\`: seed for reproducible test errors
-- \`--help\`: show command-line usage
+- `--a N`：因子 \(G\) における \(P_{00}\) の係数
+- `--b N`：因子 \(G\) における \(P_\infty\) の係数
+- `--errors T`：発生させる非零誤り座標の個数（1～12）
+- `--seed N`：再現可能なテスト誤りを生成する乱数シード
+- `--help`：コマンドライン引数の説明を表示
 
-For the current 63-point support, the program requires \(a,b\geq1\) and \(a+b\leq31\), so that \(\deg(2G)<63\). These are implementation bounds, not a claim that every allowed parameter/seed combination is guaranteed to decode the requested number of errors. The decoder checks the actual result and exits with failure if the locator candidates or correction verification do not match.
+現在の63点の評価集合では、\(\deg(2G)<63\) とするため、\(a,b\geq1\)、\(a+b\leq31\) を条件としています。これは現在のプログラム上の制約です。許可されたすべてのパラメータや乱数シードで、指定した個数の誤りを必ず復号できるという意味ではありません。復号結果を検査し、誤り位置の候補や訂正結果の検証に失敗した場合は、プログラムは失敗終了します。
 
-## Example output (default parameters)
+## 初期設定での実行例
 
-- \(n=63\)
+- 評価点数：\(n=63\)
 - \(\ell(G)=15\)
 - \(\ell(2G)=43\)
-- dual evaluation code dimension \(20\)
-- three injected errors located and corrected
-- final result: \`PASS\`
+- 双対評価符号の次元：20
+- 発生させた3個の誤りを検出・訂正
+- 最終結果：`PASS`
 
-The program prints all evaluation points, injected and decoded error locations/values, the codeword, error vector, and corrected word.
+プログラムは、すべての評価点、発生させた誤りと復号した誤りの位置・値、符号語、誤りベクトル、訂正後の語を表示します。
 
-## Scope and limitations
+## 対応範囲と制限
 
-This is a compact, algebraic demonstration over \(\mathrm{GF}(8)\), not a performance-optimized decoder. It implements the two-point case \(G=aP_{00}+bP_\infty\); it does not yet accept an arbitrary list of affine divisor places \(P_i\), nor arbitrary field sizes. The random test is a demonstration, not a proof of a universal decoding radius.
+これは \(\mathrm{GF}(8)\) 上で動作する、代数的復号の小規模なデモです。高速化を目的とした実装ではありません。
+
+現在実装しているのは \(G=aP_{00}+bP_\infty\) という2点の場合です。任意のアフィン点 \(P_i\) のリストを入力して
+
+\[
+G=a_1P_1+\cdots+a_sP_s
+\]
+
+とする一般の多点因子や、任意の有限体の大きさには、まだ対応していません。また、乱数によるテストは動作例であり、一般的な復号可能半径を証明するものではありません。
