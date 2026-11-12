@@ -26,4 +26,3 @@ jobs:
           ./bbgs_basic --m 2 --u 4 --v 4 --errors 2 --seed 1 --trials 30
           ./bbgs_basic --m 2 --u 4 --v 4 --errors 8 --seed 1 --trials 30
           ./bbgs_basic --m 2 --u 4 --v 4 --errors 10 --seed 1 --trials 30
-          ./bbgs_basic --m 2 --u 4 --v 4 --errors 12 --seed 1 --trials 30
