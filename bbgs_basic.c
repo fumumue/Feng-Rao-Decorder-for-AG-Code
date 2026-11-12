@@ -213,30 +213,41 @@ int main(int argc,char **argv) {
         fprintf(stderr,"unsupported parameters\n");return 2;
     }
     enumerate_points(); rng=(unsigned)seed+1;
-    printf("BBGS E2 basic decoder prototype\nGF(2^%d), q=%d, j=%d, k=%d\n",2*m+1,Q,J,K);
+    printf("BBGS E2 basic syndrome decoder (experimental affine code)\nGF(2^%d), q=%d, j=%d, k=%d\n",2*m+1,Q,J,K);
     printf("Affine rational support: n=%d (x != 0)\n",npts);
     printf("Locator degrees: u=%d, v=%d; check monomials degree <= %d\n",u,v,u+v);
-    if(errors==0){puts("No-error case: zero error vector is already a codeword.");return 0;}
-    if(errors>npts){fprintf(stderr,"errors must be <= n\n");return 2;}
+    if(errors>npts){fprintf(stderr,"errors must be <= n=%d\n",npts);return 2;}
+    if(errors==0){
+        puts("No-error case: no correction is necessary.");
+        return 0;
+    }
+
     int successes=0;
     for(int trial=1;trial<=trials;trial++){
-        int received[MAXN]={0},corrected[MAXN]={0},used[MAXN]={0};
+        int original[MAXN]={0},received[MAXN]={0},corrected[MAXN]={0},used[MAXN]={0};
+        int code_dim=0;
+        if(!make_random_codeword(u+v,original,&code_dim)){
+            fprintf(stderr,"could not construct a nontrivial codeword space\n");return 2;
+        }
+        memcpy(received,original,sizeof(int)*npts);
         for(int i=0;i<errors;i++){
-            int pos; do{pos=rnd()%npts;}while(used[pos]); used[pos]=1;
-            int e=1+(rnd()%(Q-1)); received[pos]=e;
+            int pos; do{pos=(int)(rnd()%(unsigned)npts);}while(used[pos]);
+            used[pos]=1;
+            int e=1+(int)(rnd()%(unsigned)(Q-1));
+            received[pos]^=e;
             if(trials==1) printf("error[%d]: point=(%d,%d), value=%d\n",i+1,pts[pos].x,pts[pos].y,e);
         }
         int nc=0,nk=0,rk=0;
         int ok=decode(received,u,v,corrected,&nc,&nk,&rk);
-        /* Demo sends the zero codeword, so require exact recovery. */
         int exact=ok;
-        if(ok) for(int p=0;p<npts;p++) if(corrected[p]!=0) exact=0;
+        if(ok) for(int p=0;p<npts;p++) if(corrected[p]!=original[p]) exact=0;
         if(exact) successes++;
         if(trials==1){
-            printf("check-matrix rank=%d, locator-kernel dimension=%d, common-zero candidates=%d\n",rk,nk,nc);
-            puts(exact?"DECODE: PASS (exact recovery and parity checks)":"DECODE: FAIL/AMBIGUOUS (or nonzero codeword output)");
+            printf("code dimension=%d; check-matrix rank=%d; locator-kernel dimension=%d; common-zero candidates=%d\n",
+                   code_dim,rk,nk,nc);
+            puts(exact?"DECODE: PASS (arbitrary codeword recovered exactly)":"DECODE: FAIL/AMBIGUOUS");
         }
     }
     if(trials>1) printf("Trials: %d, errors per trial: %d, successes: %d/%d\n",trials,errors,successes,trials);
-    return (trials==1 && successes==0)?1:0;
+    return successes==trials ? 0 : 1;
 }
