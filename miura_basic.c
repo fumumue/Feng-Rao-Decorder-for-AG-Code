@@ -294,7 +294,7 @@ int main(int argc, char **argv)
     }
 
     /* Basic syndrome matrix S[a,b] = sum r(P) f_a(P) f_b(P). */
-    uint8_t syndrome[MAX_BASIS][MAX_BASIS] = {{0}};
+    uint8_t syndrome[MAX_ROWS][MAX_COLS] = {{0}};
     for (int a = 0; a < basis_count; ++a)
         for (int b = 0; b < basis_count; ++b)
             for (int p = 0; p < npoints; ++p)
@@ -302,8 +302,7 @@ int main(int argc, char **argv)
                     gf_mul(evals[a][p], evals[b][p]));
 
     uint8_t syndrome_kernel[MAX_COLS][MAX_COLS] = {{0}};
-    int kernel_dim = nullspace((const uint8_t (*)[MAX_COLS])syndrome,
-                               basis_count, basis_count, syndrome_kernel);
+    int kernel_dim = nullspace(syndrome, basis_count, basis_count, syndrome_kernel);
 
     /* The common zeros of kernel functions are the error positions. */
     uint8_t decoded_positions[MAX_ERRORS] = {0};
