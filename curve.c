@@ -174,7 +174,22 @@ static const Curve CURVES[] = {
      {{16, 0, 1}, {0, 1, 1}, {15, 4, 1}, {12, 16, 1}}},
     {"custom", "user-defined (edit the table in the source)", 3, 4, 3,
      {{3, 1, 1}, {0, 3, 1}, {1, 0, 1}}},
-};
+/*
+     //gf8 g=6 Generalized Hermitian
+    { {3, 2, 1}, { 2, 4, 1}, {0, 1, 1}, {4, 0, 1} }
+    //gf16 g=21 #N=121 Generalized Hermitian
+    { {7, 4, 0}, {6, 8, 0}, {4, 1, 0}, {0, 2, 0}, {8, 0, 0, 1} },
+  //gf32 g=75 #N=497 Generalized Hermitian
+    { {15, 8, 0}, {14, 16, 0}, {12, 1, 0}, {8, 2, 0}, {0, 4, 0, 1}, {16, 0, 0,1} },
+  //gf64 g=212 #N=2017 Generalized Hermitian
+    { {31, 8, 0}, {30, 16, 0}, {28, 32, 0}, {24, 1, 0}, {16, 2, 0, 1}, {0, 4, 0, 1},{32, 0, 0, 1} },
+  //gf256 g=2413 Generalized Hermitian
+    { {127, 8, 0}, {126, 16, 0}, {124, 32, 0}, {120, 64, 0}, {112, 128, 0}},
+    {{96, 1, 0}, {64, 2, 0}, {0, 4, 0}, {128, 0, 0} },
+  //gf128 g=315 Generalized Hermitian
+    { {63, 8, 0}, {62, 16, 0}, {60, 32, 0}, {56, 64, 0}, {48, 1, 0}, {32, 2, 0}, {0, 4, 0}, {64, 0, 0} }
+     */
+    };
 #define NCURVES ((int)(sizeof(CURVES) / sizeof(CURVES[0])))
 
 typedef struct

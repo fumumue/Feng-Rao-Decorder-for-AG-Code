@@ -356,7 +356,7 @@ static int parse_int_arg(const char *s, int *v)
 
 int main(int argc, char **argv)
 {
-    int a = 14, b = 14, errors = 3, seed = 7;
+    int a = 14, b = 14, errors = 10, seed = 7;
     for (int i = 1; i < argc; ++i)
     {
         if ((!strcmp(argv[i], "--a") || !strcmp(argv[i], "-a")) && i + 1 < argc)
