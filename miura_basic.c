@@ -124,7 +124,7 @@ static int nullspace(const uint8_t input[MAX_ROWS][MAX_COLS],
 
 /* Solve A*x=s with possibly more equations than unknowns. */
 static int solve_values(const uint8_t evals[MAX_BASIS][MAX_POINTS],
-                        const uint8_t syndrome[MAX_BASIS][MAX_BASIS],
+                        const uint8_t syndrome[MAX_ROWS][MAX_COLS],
                         const uint8_t *positions, int nerr,
                         uint8_t *values, int basis_count)
 {
@@ -356,6 +356,13 @@ int main(int argc, char **argv)
     printf("Code dimension: %d\n", code_dimension);
     printf("Syndrome-kernel dimension: %d\n", kernel_dim);
     printf("Injected errors: %d (seed %d)\n", errors, seed);
+
+    puts("Injected errors (support index : (x,y) : value):");
+    for (int e = 0; e < errors; ++e) {
+        Point p = points[injected_positions[e]];
+        printf("  %u : (%u,%u) : %u\\n",
+               injected_positions[e], p.x, p.y, injected_values[e]);
+    }
 
     puts("Decoded errors (support index : (x,y) : value):");
     for (int e = 0; e < decoded_count; ++e) {
