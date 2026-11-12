@@ -1,0 +1,29 @@
+name: BBGS E2 basic syndrome decoder
+
+on:
+  push:
+    branches:
+      - research/bbgs-basic-2026-11-12
+    paths:
+      - "bbgs_basic.c"
+      - "bbgs_basic_ja.md"
+      - ".github/workflows/bbgs-basic.yml"
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile
+        run: cc -O2 -std=c11 -Wall -Wextra -Werror -o bbgs_basic bbgs_basic.c
+      - name: GF(8) smoke tests
+        run: |
+          ./bbgs_basic --m 1 --u 2 --v 2 --errors 1 --seed 1 --trials 30
+          ./bbgs_basic --m 1 --u 2 --v 2 --errors 2 --seed 1 --trials 30
+      - name: GF(32) decoding tests
+        run: |
+          ./bbgs_basic --m 2 --u 4 --v 4 --errors 2 --seed 1 --trials 30
+          ./bbgs_basic --m 2 --u 4 --v 4 --errors 8 --seed 1 --trials 30
+          ./bbgs_basic --m 2 --u 4 --v 4 --errors 10 --seed 1 --trials 30
+          ./bbgs_basic --m 2 --u 4 --v 4 --errors 12 --seed 1 --trials 30
