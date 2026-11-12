@@ -1,0 +1,26 @@
+name: Miura C34 basic decoding
+
+on:
+  push:
+    branches:
+      - miura-basic-working-2026-11-12
+    paths:
+      - "miura_basic.c"
+      - "miura_basic.md"
+      - ".github/workflows/miura-basic.yml"
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile with strict warnings
+        run: cc -O2 -std=c11 -Wall -Wextra -Werror -o miura_basic miura_basic.c
+      - name: Test reproducible errors 1 through 8
+        run: |
+          for errors in 1 2 3 4 5 6 7 8; do
+            for seed in 1 2 3 4 5; do
+              ./miura_basic --errors=$errors --seed=$seed
+            done
+          done
