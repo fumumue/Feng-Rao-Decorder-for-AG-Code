@@ -2,7 +2,7 @@
  * BBGS E2 over GF(8): one-point AG code and a small bounded-distance decoder.
  *
  * Curve (q=2,c=3,a=1,b=2), written without rational functions:
- *   x^3*y^2 + x^2*y^4 + x^4*y + x^4 = 0.
+ *   x^3*y^2 + x^2*y^4 + y + x^4 = 0.
  * This is the denominator-cleared form of the trace equation on x != 0.
  * D consists of the 28 affine rational places (x,y), x != 0.
  * P1=(x=0,y=0,x^(-4)y=1) is the unique rational place in P.
@@ -78,10 +78,10 @@ static gf eval_monomial(Monomial m, Point p) {
     return mul(power(p.x, m.i), power(p.y, m.j));
 }
 static int on_curve(gf x, gf y) {
-    /* Polynomial form: x^3*y^2 + x^2*y^4 + x^4*y + x^4 = 0. */
+    /* Polynomial form: x^3*y^2 + x^2*y^4 + y + x^4 = 0. */
     gf x2 = power(x, 2u), x3 = power(x, 3u), x4 = power(x, 4u);
     gf y2 = power(y, 2u), y4 = power(y, 4u);
-    gf v = mul(x3, y2) ^ mul(x2, y4) ^ mul(x4, y) ^ x4;
+    gf v = mul(x3, y2) ^ mul(x2, y4) ^ y ^ x4;
     return v == 0;
 }
 static int enumerate_points(void) {
@@ -285,7 +285,7 @@ int main(int argc, char **argv) {
     if (construct_matrices()) { fprintf(stderr, "generator/parity-check construction failed\n"); return 1; }
 
     printf("BBGS E2 over GF(8): C_L(D,11P1)\n");
-    puts("Polynomial curve: x^3*y^2 + x^2*y^4 + x^4*y + x^4 = 0");
+    puts("Polynomial curve: x^3*y^2 + x^2*y^4 + y + x^4 = 0");
     puts("P1=(x=0,y=0,x^(-4)y=1); this is the rational one-point place, not an infinity point.");
     printf("n=%d, k=%d, genus=6, designed distance >=17, guaranteed radius >=8\n", N, K);
     printf("Decoder implementation: exhaustive syndrome search up to %d errors\n", MAX_T);
