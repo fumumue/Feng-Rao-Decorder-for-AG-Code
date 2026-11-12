@@ -68,12 +68,6 @@ static gf power(gf a, unsigned e) {
     return r;
 }
 static gf inverse(gf a) { return a ? power(a, 6u) : 0; }
-static gf divide(gf a, gf b) { return mul(a, inverse(b)); }
-static gf trace2(gf a, unsigned n) {
-    gf s = 0;
-    for (unsigned i = 0; i < n; ++i) { s ^= a; a = mul(a, a); }
-    return s;
-}
 static gf eval_monomial(Monomial m, Point p) {
     return mul(power(p.x, m.i), power(p.y, m.j));
 }
