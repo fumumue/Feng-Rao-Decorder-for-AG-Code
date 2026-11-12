@@ -228,10 +228,13 @@ int main(int argc,char **argv) {
         }
         int nc=0,nk=0,rk=0;
         int ok=decode(received,u,v,corrected,&nc,&nk,&rk);
-        if(ok) successes++;
+        /* Demo sends the zero codeword, so require exact recovery. */
+        int exact=ok;
+        if(ok) for(int p=0;p<npts;p++) if(corrected[p]!=0) exact=0;
+        if(exact) successes++;
         if(trials==1){
             printf("check-matrix rank=%d, locator-kernel dimension=%d, common-zero candidates=%d\n",rk,nk,nc);
-            puts(ok?"DECODE: PASS (all parity checks verified)":"DECODE: FAIL/AMBIGUOUS");
+            puts(exact?"DECODE: PASS (exact recovery and parity checks)":"DECODE: FAIL/AMBIGUOUS (or nonzero codeword output)");
         }
     }
     if(trials>1) printf("Trials: %d, errors per trial: %d, successes: %d/%d\n",trials,errors,successes,trials);
