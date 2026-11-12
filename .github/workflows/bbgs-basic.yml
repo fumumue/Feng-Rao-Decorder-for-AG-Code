@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - research/bbgs-basic-2026-11-12-main
+      - bbgs-basic-real-codeword-2026-11-12
     paths:
       - "bbgs_basic.c"
       - "bbgs_basic_ja.md"
