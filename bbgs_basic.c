@@ -134,6 +134,52 @@ static int solve_unique(int *A, int rows, int cols, const int *rhs, int *x) {
 static unsigned rng=1;
 static unsigned rnd(void){rng^=rng<<13;rng^=rng>>17;rng^=rng<<5;return rng;}
 
+static int nullspace_large(const int *A, int rows, int cols, int *out) {
+    int lim = rows < cols ? rows : cols;
+    int *R = (int *)malloc(sizeof(int) * (size_t)rows * (size_t)cols);
+    int *piv = (int *)malloc(sizeof(int) * (size_t)lim);
+    unsigned char *is_piv = (unsigned char *)calloc((size_t)cols, 1);
+    if (!R || !piv || !is_piv) { free(R); free(piv); free(is_piv); return -1; }
+    memcpy(R, A, sizeof(int) * (size_t)rows * (size_t)cols);
+    int rank = rref(R, rows, cols, piv);
+    for (int i = 0; i < rank; ++i) is_piv[piv[i]] = 1;
+    int dim = 0;
+    for (int f = 0; f < cols; ++f) if (!is_piv[f]) {
+        int *vec = out + (size_t)dim * (size_t)cols;
+        memset(vec, 0, sizeof(int) * (size_t)cols);
+        vec[f] = 1;
+        for (int i = 0; i < rank; ++i)
+            vec[piv[i]] = R[(size_t)i * (size_t)cols + (size_t)f];
+        ++dim;
+    }
+    free(R); free(piv); free(is_piv);
+    return dim;
+}
+
+static int make_random_codeword(int degree, int *word, int *dimension) {
+    Mon mons[MAXMON];
+    int nh = monomials(degree, mons);
+    if (nh <= 0 || nh > MAXMON) return 0;
+    int *H = (int *)malloc(sizeof(int) * (size_t)nh * (size_t)npts);
+    int *basis = (int *)calloc((size_t)npts * (size_t)npts, sizeof(int));
+    if (!H || !basis) { free(H); free(basis); return 0; }
+    for (int h = 0; h < nh; ++h)
+        for (int p = 0; p < npts; ++p)
+            H[h*npts+p] = eval_mon(mons[h], pts[p]);
+    int dim = nullspace_large(H, nh, npts, basis);
+    if (dim <= 0) { free(H); free(basis); return 0; }
+    memset(word, 0, sizeof(int) * (size_t)npts);
+    for (int z = 0; z < dim; ++z) {
+        int coefficient = (int)(rnd() % (unsigned)Q);
+        if (!coefficient) continue;
+        for (int p = 0; p < npts; ++p)
+            word[p] ^= gf_mul(coefficient, basis[z*npts+p]);
+    }
+    *dimension = dim;
+    free(H); free(basis);
+    return 1;
+}
+
 static int decode(const int *received, int u, int v, int *corrected,
                   int *candidate_count, int *kernel_dim, int *check_rank) {
     Mon Amon[MAXMON],Bmon[MAXMON],Hmon[MAXMON];
