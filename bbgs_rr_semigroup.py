@@ -31,9 +31,11 @@ def rr_dimension(v: int) -> int:
       0 <= q^(a-1)N_b i - q^(b-1)N_c j
            - (q^(a-1)-1)N_c k.
 
+    The two half-open interval inequalities uniquely give
+      j = ceil(q^a i / N_c), k = ceil(-i / N_c).
     For each residue i0 modulo N_c, write i=i0+t N_c (t>=0).
     Then j increases by q^a, k decreases by 1, and the final
-    expression decreases by exactly N_c.  Thus the number of
+    expression decreases by exactly N_c. Thus the number of
     admissible t is floor(T(i0)/N_c)+1 when T(i0)>=0.
     """
     if v < 0:
