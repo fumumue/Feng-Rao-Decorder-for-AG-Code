@@ -9,10 +9,17 @@
  *
  * For this curve:
  *   div(x)=P1+3V-2Q, div(y)=4P1-2V-Q.
- * Thus x^i y^j belongs to L(11P1) iff
- *   i+4j >= -11, 3i-2j >= 0, -2i-j >= 0.
- * The six resulting monomials form a basis:
+ * A rational-function basis of L(11P1) is:
  *   x^-1 y^-2, y^-2, y^-1, 1, x y^-3, x y^-2.
+ *
+ * Since x and y are nonzero at every evaluation point in D, multiply
+ * every basis function by the common nonzero factor x*y^3. The resulting
+ * polynomial basis is:
+ *   y, x*y, x*y^2, x*y^3, x^2, x^2*y.
+ * This changes the evaluation vector at each point by the same nonzero
+ * coordinate multiplier x*y^3, so the code is monomially equivalent:
+ * n, k and minimum distance are unchanged. The parity-check matrix is
+ * reconstructed from this polynomial generator matrix.
  *
  * The decoder constructs H as a nullspace basis of G and exhaustively
  * searches error supports of weight <= 3. It is a syndrome decoder for
@@ -33,7 +40,7 @@
 
 typedef unsigned char gf;
 typedef struct { gf x, y; } Point;
-typedef struct { int i, j; } Monomial;
+typedef struct { unsigned i, j; } Monomial;
 
 static Point points[N];
 static Monomial basis[K];
@@ -66,11 +73,8 @@ static gf trace2(gf a, unsigned n) {
     for (unsigned i = 0; i < n; ++i) { s ^= a; a = mul(a, a); }
     return s;
 }
-static gf signed_power(gf a, int e) {
-    return e >= 0 ? power(a, (unsigned)e) : power(inverse(a), (unsigned)(-e));
-}
 static gf eval_monomial(Monomial m, Point p) {
-    return mul(signed_power(p.x, m.i), signed_power(p.y, m.j));
+    return mul(power(p.x, m.i), power(p.y, m.j));
 }
 static int on_curve(gf x, gf y) {
     gf t1 = trace2(divide(power(y, 2u), x), 2u);
@@ -88,16 +92,18 @@ static int enumerate_points(void) {
     return n;
 }
 
-/* Construct the L(11P1) basis from the three divisor inequalities. */
+/* Polynomial basis obtained by multiplying the RR basis by x*y^3. */
 static int construct_basis(void) {
-    int n = 0;
-    for (int i = -11; i <= 11; ++i)
-        for (int j = -11; j <= 11; ++j)
-            if (i + 4*j >= -11 && 3*i - 2*j >= 0 && -2*i - j >= 0) {
-                if (n >= K) return -1;
-                basis[n++] = (Monomial){i, j};
-            }
-    return n;
+    static const Monomial polynomial_basis[K] = {
+        {0,1},  /* y    */
+        {1,1},  /* x*y  */
+        {1,2},  /* x*y^2 */
+        {1,3},  /* x*y^3 */
+        {2,0},  /* x^2 */
+        {2,1}   /* x^2*y */
+    };
+    memcpy(basis, polynomial_basis, sizeof basis);
+    return K;
 }
 
 /* RREF over GF(8); A is packed with the given row stride 'cols'. */
@@ -280,7 +286,7 @@ int main(int argc, char **argv) {
     puts("P1=(x=0,y=0,x^(-4)y=1); this is the rational one-point place, not an infinity point.");
     printf("n=%d, k=%d, genus=6, designed distance >=17, guaranteed radius >=8\n", N, K);
     printf("Decoder implementation: exhaustive syndrome search up to %d errors\n", MAX_T);
-    puts("L(11P1) basis:");
+    puts("Polynomial basis (common factor x*y^3 applied to the RR basis):");
     for (int r = 0; r < K; ++r) printf("  x^(%d) y^(%d)\n", basis[r].i, basis[r].j);
     if (check_distance) {
         int d = exhaustive_minimum_distance();
