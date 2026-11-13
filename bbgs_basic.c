@@ -134,6 +134,84 @@ static int solve_unique(int *A, int rows, int cols, const int *rhs, int *x) {
 static unsigned rng=1;
 static unsigned rnd(void){rng^=rng<<13;rng^=rng>>17;rng^=rng<<5;return rng;}
 
+static int verbose = 0;   /* trials==1 のとき 1 にする */
+
+/* 単項式 (a,b) の添字を Hmon から探す */
+static int mon_index(const Mon *H, int nh, int a, int b) {
+    for (int h = 0; h < nh; ++h)
+        if (H[h].a == a && H[h].b == b) return h;
+    return -1;
+}
+
+/* 多項式 sum c[i] x^a y^b を表示 */
+static void print_poly(const Mon *mon, const int *c, int n) {
+    int first = 1;
+    for (int i = n - 1; i >= 0; --i) {          /* 次数の高い項から */
+        if (!c[i]) continue;
+        if (!first) printf(" + ");
+        first = 0;
+        printf("%d", c[i]);
+        if (mon[i].a) printf("*x^%d", mon[i].a);
+        if (mon[i].b) printf("*y^%d", mon[i].b);
+    }
+    if (first) printf("0");
+}
+
+/*
+ * 誤りロケーター構成(基本アルゴリズム風)
+ *   シンドローム行列 M[j][i] = S_(Bmon[j] + Amon[i])
+ *   (行: 次数<=v の単項式, 列: 次数<=d の単項式)
+ *   d = 0,1,2,... と増やし、M c = 0 が非自明解を持つ最初の d を探す。
+ *   その核ベクトル c が L = sum c_i * Amon[i] の係数で、
+ *   L が誤り位置で 0 になるものが誤りロケーター。
+ *
+ *   行数 nb が列数 na 未満だと条件不足で核が自明に出てしまうので、
+ *   na <= nb の範囲だけを調べる。
+ *
+ * 戻り値: 見つかった次数 d (なければ -1)
+ *   loc : 核の基底 (nk 本 x na 個) / Aout: そのときの単項式列
+ */
+static int build_locator(const int *syn, const Mon *Hmon, int nh,
+                         int dmax, int v,
+                         int *loc, int *nk_out, int *na_out, Mon *Aout) {
+    Mon Bmon[MAXMON];
+    int nb = monomials(v, Bmon);
+    for (int d = 0; d <= dmax; ++d) {
+        Mon Amon[MAXMON];
+        int na = monomials(d, Amon);
+        if (na > nb) break;                      /* 条件不足 */
+        int MM[MAXMON * MAXMON];
+        for (int i = 0; i < na; ++i)
+            for (int j = 0; j < nb; ++j) {
+                int idx = mon_index(Hmon, nh, Amon[i].a + Bmon[j].a,
+                                              Amon[i].b + Bmon[j].b);
+                if (idx < 0) return -1;
+                MM[j * na + i] = syn[idx];
+            }
+        int nk = nullspace(MM, nb, na, loc);
+        if (nk < 0) return -1;
+        if (nk > 0) {
+            *nk_out = nk; *na_out = na;
+            memcpy(Aout, Amon, sizeof(Mon) * na);
+            return d;
+        }
+    }
+    return -1;
+}
+
+/* ロケーター L(x,y)=sum c[i] Amon[i] の零点(点の添字)を列挙 */
+static int locator_zeros(const Mon *Amon, int na, const int *c, int *zeros) {
+    int nz = 0;
+    for (int p = 0; p < npts; ++p) {
+        int val = 0;
+        for (int a = 0; a < na; ++a)
+            if (c[a]) val ^= gf_mul(c[a], eval_mon(Amon[a], pts[p]));
+        if (!val) zeros[nz++] = p;
+    }
+    return nz;
+}
+
+
 static int decode(const int *received, int u, int v, int *corrected,
                   int *candidate_count, int *kernel_dim, int *check_rank) {
     Mon Amon[MAXMON],Bmon[MAXMON],Hmon[MAXMON];
@@ -142,6 +220,26 @@ static int decode(const int *received, int u, int v, int *corrected,
     int H[MAXMON*MAXN], syn[MAXMON]={0};
     for(int h=0;h<nh;h++) for(int p=0;p<npts;p++) H[h*npts+p]=eval_mon(Hmon[h],pts[p]);
     for(int h=0;h<nh;h++) for(int p=0;p<npts;p++) syn[h]^=gf_mul(H[h*npts+p],received[p]);
+
+        {   /* --- 誤りロケーターの構成と表示 --- */
+        int loc[MAXMON * MAXMON], nkl = 0, nal = 0;
+        Mon Aloc[MAXMON];
+        int d = build_locator(syn, Hmon, nh, u, v, loc, &nkl, &nal, Aloc);
+        if (verbose) {
+            if (d < 0) {
+                puts("locator: 見つかりません (u,v を増やしてください)");
+            } else {
+                printf("locator: 最小次数 d=%d, 核の次元=%d\n", d, nkl);
+                for (int z = 0; z < nkl; ++z) {
+                    int zeros[MAXN];
+                    printf("  L%d(x,y) = ", z + 1);
+                    print_poly(Aloc, loc + z * nal, nal);
+                    int nz = locator_zeros(Aloc, nal, loc + z * nal, zeros);
+                    printf("\n    零点の数(曲線上) = %d\n", nz);
+                }
+            }
+        }
+    }
 
     int MM[MAXMON*MAXMON];
     for(int i=0;i<na;i++) for(int j=0;j<nb;j++) {
@@ -212,6 +310,7 @@ int main(int argc,char **argv) {
     if(!init_field(m)||u<0||v<0||u+v>8||errors<0||errors>MAXN||trials<1||trials>10000){
         fprintf(stderr,"unsupported parameters\n");return 2;
     }
+    verbose = (trials == 1);
     enumerate_points(); rng=(unsigned)seed+1;
     printf("BBGS E2 basic decoder prototype\nGF(2^%d), q=%d, j=%d, k=%d\n",2*m+1,Q,J,K);
     printf("Affine rational support: n=%d (x != 0)\n",npts);
