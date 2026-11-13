@@ -1548,6 +1548,14 @@ MP bbgs_curve(int s)
 }
 
 
+MP mkter(int q,int m){
+    mterm x={0} ,y={0};
+    int c=m, a=0,b=0;
+    MP f={0};
+
+}
+
+
 int main(void)
 {
     int i, j, k = 0, a, b, c, count = 0, x, y, z, g, n;
