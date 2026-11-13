@@ -173,10 +173,11 @@ static const Curve CURVES[] = {
     {"bbgs64", "BBGS q=4,n=3,j=1: x^16 + y + x^15*y^4 + x^12*y^16 = 0 over GF(64)", 6, 28, 4,
      {{16, 0, 1}, {0, 1, 1}, {15, 4, 1}, {12, 16, 1}}},
     {"custom", "user-defined (edit the table in the source)", 3, 4, 3,
-     {{3, 1, 1}, {0, 3, 1}, {1, 0, 1}}},
-/*
+     {{3, 1, 1}, {0, 3, 1}, {1, 0, 1}}}
      //gf8 g=6 Generalized Hermitian
-    { {3, 2, 1}, { 2, 4, 1}, {0, 1, 1}, {4, 0, 1} }
+    //{"a","GH",3,6,1, {{3, 2, 1}, { 2, 4, 1}, {0, 1, 1}, {4, 0, 1} }}};
+
+    /*
     //gf16 g=21 #N=121 Generalized Hermitian
     { {7, 4, 0}, {6, 8, 0}, {4, 1, 0}, {0, 2, 0}, {8, 0, 0, 1} },
   //gf32 g=75 #N=497 Generalized Hermitian
@@ -189,7 +190,9 @@ static const Curve CURVES[] = {
   //gf128 g=315 Generalized Hermitian
     { {63, 8, 0}, {62, 16, 0}, {60, 32, 0}, {56, 64, 0}, {48, 1, 0}, {32, 2, 0}, {0, 4, 0}, {64, 0, 0} }
      */
-    };
+};
+
+
 #define NCURVES ((int)(sizeof(CURVES) / sizeof(CURVES[0])))
 
 typedef struct
