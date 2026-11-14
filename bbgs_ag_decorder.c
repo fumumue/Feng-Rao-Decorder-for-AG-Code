@@ -9,13 +9,15 @@
  * Example: ./bbgs_ag_decoder --a 3 --b 2 --v 149 --t 80 --errors 10
  *
  * Extensions in this version
- *   - field degree up to GF(2^10) (a+b <= 10), up to 256 injected errors
+ *   - any a>b (a odd, gcd(a,b)=1, b>=2) with c=a+b <= 12, up to 256 injected errors
+ *   - --auto 1 chooses v,t automatically from --errors
  *   - error locator function(s) printed as polynomial in x,z,w
  *   - table of error positions / values (decoded vs injected)
  *   - --list 0|1 and --locator N control the report (first trial only)
  *
- * Note: with the constraints a=b+1, a odd, gcd(a,b)=1 the only pairs with
- * a+b<=10 are (a,b)=(3,2) -> GF(2^5) and (5,4) -> GF(2^9).
+ * Note: the basis/genus formulas were derived for a=b+1; for other a>b they are
+ * used as-is and NOT proven here. The self-checks (A*B subset H, decode results)
+ * are evidence only. For large n (c>=9) use --fast 1.
  *
  * Current algebraic scope: the BBGS family and the matching Hu Omega-lattice
  * basis formulas below. Replacing bb_H alone by an unrelated equation does
@@ -27,7 +29,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define MAX_M 10
+#define MAX_M 12
 #define MAX_ERRORS 256
 
 typedef uint16_t GF;
@@ -38,8 +40,9 @@ static int LOGT[1 << MAX_M];
 
 static int gf_init(int m)
 {
-    /* primitive polynomials x^m + ... for m = 2..10 */
-    static const unsigned poly[MAX_M + 1] = {0, 0, 0x7, 0xB, 0x13, 0x25, 0x43, 0x89, 0x11D, 0x211, 0x409};
+    /* primitive polynomials x^m + ... for m = 2..13 */
+    static const unsigned poly[MAX_M + 1] = {0, 0, 0x7, 0xB, 0x13, 0x25, 0x43, 0x89, 0x11D, 0x211, 0x409,
+                                             0x805, 0x1053};
     if (m < 2 || m > MAX_M)
         return 0;
     GQ = 1 << m;
@@ -390,9 +393,8 @@ static GF frob2(GF x, int k) {
     while (k--) x = gmul(x,x);
     return x;
 }
-static GF bb_H(GF x, GF y) { return bbgs_define_equation(x, y); }
-static int bb_point_data(GF x,GF y,GF *z,GF *w) {
-    if (!x || !y || bb_H(x,y)!=1) return 0;
+/* 曲線上の点であることが既知の場合の補助関数値 (H の再評価を省く) */
+static int bb_point_data_nc(GF x,GF y,GF *z,GF *w) {
     /* p=2, a odd, so a^{-1}=1 in F_2. */
     GF u = 1 ^ gmul(frob2(y,BB_A),ginv(x))
                   ^ gmul(frob2(y,1),ginv(frob2(x,BB_A)));
@@ -401,6 +403,7 @@ static int bb_point_data(GF x,GF y,GF *z,GF *w) {
     *w=gmul(gmul(frob2(y,BB_A),ginv(x)),ginv(u));
     return 1;
 }
+
 static int64_t floor_div_posden(int64_t x,int64_t d) {
     if (x>=0) return x/d;
     return - ((-x+d-1)/d);
@@ -501,51 +504,71 @@ static int gcd(int x,int y) { while(y){int z=x%y;x=y;y=z;} return x; }
 /* ------------------------------------------------------------------ */
 /* 表示: 誤り位置関数と誤りリスト                                       */
 /* ------------------------------------------------------------------ */
+static void print_term(const Code *c, GF co, int i)
+{
+    printf("  ");
+    pe(co);
+    if (c->A.ei)
+        printf(" * x^(%lld) * z^(%lld) * w^(%lld)",
+               (long long)c->A.ei[i], (long long)c->A.ej[i], (long long)c->A.ek[i]);
+    else
+        printf(" * basis[%d]", i);
+}
+
+/*
+ * 誤り位置多項式: 核の基底の先頭(最小)のもの。L(A) の基底は極の位数の昇順に
+ * 並んでいるので、これは「誤り位置で 0 になる関数のうち位数が最小」のもので、
+ * スカラー倍を除いて一意。先頭係数を 1 に正規化し、高位の項から順に表示する。
+ * nloc >= 2 のときは、参考として核の他の元も続けて表示する。
+ */
 static void show_locator(const Code *c, const Report *rep, const int *errpos, int nerrpos, int nloc)
 {
     int n = c->n, K1 = c->A.cnt;
-    printf("\n==== Error locator ====\n");
-    if (!rep->ker || rep->dimk == 0) { printf("(kernel is empty: no locator found)\n"); return; }
-    printf("kernel dimension = %d : functions f in L(A) with  sum_p e_p f(p) g(p) = 0  for all g in L(B)\n", rep->dimk);
-    printf("common zero set Z of the kernel: |Z| = %d rational points (error positions are contained in Z)\n", rep->nz);
+    printf("\n==== Error locator polynomial ====\n");
+    if (!rep->ker || rep->dimk == 0) { printf("(no locator found: kernel is empty)\n"); return; }
     int show = rep->dimk < nloc ? rep->dimk : nloc;
     for (int v = 0; v < show; ++v)
     {
         const GF *co = rep->ker + (size_t)v * K1;
-        int terms = 0, zeros = 0, allerr = 1;
-        for (int i = 0; i < K1; ++i) if (co[i]) ++terms;
+        int hi = -1, terms = 0, zeros = 0, allerr = 1;
+        for (int i = 0; i < K1; ++i) if (co[i]) { hi = i; ++terms; }
+        if (hi < 0) continue;
+        GF inv = ginv(co[hi]);
         for (int p = 0; p < n; ++p)
         {
             GF z = 0;
-            for (int i = 0; i < K1; ++i)
+            for (int i = 0; i <= hi; ++i)
                 z ^= gmul(co[i], c->A.v[(size_t)i * n + p]);
             if (!z) ++zeros;
         }
         for (int k = 0; k < nerrpos; ++k)
         {
             GF z = 0;
-            for (int i = 0; i < K1; ++i)
+            for (int i = 0; i <= hi; ++i)
                 z ^= gmul(co[i], c->A.v[(size_t)i * n + errpos[k]]);
             if (z) allerr = 0;
         }
-        printf("\nLocator #%d: f(x,z,w) = sum of %d terms (g = primitive element of GF(2^%d))\n", v + 1, terms, BB_C);
+        if (v == 0)
+            printf("Sigma(x,z,w) = monic, minimal-order function vanishing at the error positions\n");
+        else
+            printf("\n(kernel element #%d, for reference)\n", v + 1);
+        printf("leading basis index = %d (uses the first %d functions of L(A)), %d terms, g = primitive element of GF(2^%d)\n",
+               hi, hi + 1, terms, BB_C);
         int first = 1;
-        for (int i = 0; i < K1; ++i)
+        for (int i = hi; i >= 0; --i)
         {
             if (!co[i]) continue;
-            printf("  %s ", first ? " " : "+");
-            pe(co[i]);
-            if (c->A.ei)
-                printf(" * x^(%lld) * z^(%lld) * w^(%lld)",
-                       (long long)c->A.ei[i], (long long)c->A.ej[i], (long long)c->A.ek[i]);
-            else
-                printf(" * basis[%d]", i);
+            GF cs = gmul(co[i], inv);
+            printf("%s", first ? "   " : " + ");
+            print_term(c, cs, i);
             printf("\n");
             first = 0;
         }
-        printf("  -> f vanishes at %d of %d rational points; vanishes at all decoded error positions: %s\n",
+        printf("  -> vanishes at %d of %d rational points; vanishes at all decoded error positions: %s\n",
                zeros, n, allerr ? "yes" : "NO");
     }
+    printf("\n(kernel dimension = %d; common zero set |Z| = %d points contains the error positions)\n",
+           rep->dimk, rep->nz);
 }
 
 static void show_errors(const Code *c, const Point *pts, const GF *rcv, const GF *dec,
@@ -579,7 +602,7 @@ static void show_errors(const Code *c, const Point *pts, const GF *rcv, const GF
 
 int main(int argc, char **argv)
 {
-    int a=3, b=2, v=149, t=80, errors=1, seed=1, trials=1, list=1, locator=1, fast=0, relax=0;
+    int a=3, b=2, v=149, t=80, errors=1, seed=1, trials=1, list=1, locator=1, fast=0, autop=0;
     for (int i=1; i<argc; ++i) {
         int *dst=NULL;
         if (!strcmp(argv[i],"--a")) dst=&a;
@@ -592,19 +615,21 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i],"--list")) dst=&list;
         else if (!strcmp(argv[i],"--locator")) dst=&locator;
         else if (!strcmp(argv[i],"--fast")) dst=&fast;
-        else if (!strcmp(argv[i],"--relax")) dst=&relax;
+        else if (!strcmp(argv[i],"--auto")) dst=&autop;
         else if (!strcmp(argv[i],"--help") || !strcmp(argv[i],"-h")) {
             printf("BBGS binary ECP decoder (q=2)\n"
                    "Usage: %s [--a A --b B --v V --t T --errors E --trials N --seed S\n"
-                   "          --list 0|1 --locator N --fast 0|1 --relax 0|1]\n"
+                   "          --list 0|1 --locator N --fast 0|1 --auto 0|1]\n"
+                   "  --auto 1     choose v,t automatically from --errors (ignores --v/--t)\n"
                    "  --fast 1     large n (e.g. GF(2^9)): zero codeword, no H/verify/nullspace,\n"
                    "               B evaluated lazily, no independence check (assumes deg < n)\n"
-                   "  --relax 1    drop the a=b+1 restriction (unverified formulas)\n"
                    "  --errors E   number of injected errors (1..%d)\n"
                    "  --list 0|1   print the error position/value table (first trial)\n"
                    "  --locator N  print up to N locator functions (0 = none, first trial)\n"
                    "Default: a=3 b=2 over GF(2^5), v=149, t=80\n"
-                   "Allowed: a=b+1, a odd, gcd(a,b)=1, a+b<=%d  ->  (3,2) and (5,4)\n",
+                   "Allowed: a>b>=2, a odd, gcd(a,b)=1, a+b<=%d\n"
+                   "  e.g. (3,2) (5,2) (5,3) (5,4) (7,2) (7,3) (7,4) (7,5) (9,2)\n"
+                   "Large n (c>=9): use --fast 1\n",
                    argv[0], MAX_ERRORS, MAX_M);
             return 0;
         } else { fprintf(stderr,"Unknown option: %s\n",argv[i]); return 2; }
@@ -612,9 +637,9 @@ int main(int argc, char **argv)
             fprintf(stderr,"Bad option value for %s\n",argv[i-1]); return 2;
         }
     }
-    if (a<3 || b<2 || (!relax && a!=b+1) || a+b>MAX_M || !(a&1) || gcd(a,b)!=1 ||
+    if (a<3 || b<2 || a<=b || a+b>MAX_M || !(a&1) || gcd(a,b)!=1 ||
         v<0 || t<0 || errors<1 || trials<1) {
-        fprintf(stderr,"Require (a=b+1 unless --relax 1), b>=2, a+b<=%d, gcd(a,b)=1, a odd, and nonnegative v,t.\n",MAX_M);
+        fprintf(stderr,"Require a>b>=2, a+b<=%d, gcd(a,b)=1, a odd, and nonnegative v,t.\n",MAX_M);
         return 2;
     }
     if (errors>MAX_ERRORS) {
@@ -624,14 +649,49 @@ int main(int argc, char **argv)
     BB_A=a; BB_B=b; BB_C=a+b;
     if (!gf_init(BB_C)) { fprintf(stderr,"GF(2^%d) initialization failed.\n",BB_C); return 2; }
 
-    size_t max_points=(size_t)GQ*GQ;
-    Point *pts=malloc(max_points*sizeof(*pts));
+    /*
+     * 点の列挙: H(x,y) は y について F_2 線形 (Frobenius は加法的) なので、
+     * 各 x で L_x(e_i) を 13 個計算し、y を Gray code で全走査して L_x(y)=1 を探す。
+     */
+    size_t pcap=(size_t)1<<20, pn=0;
+    Point *pts=malloc(pcap*sizeof(*pts));
     if (!pts) { fprintf(stderr,"Point allocation failed.\n"); return 1; }
-    int n=0;
-    for (int x=1; x<GQ; ++x)
-        for (int y=1; y<GQ; ++y)
-            if (bb_H((GF)x,(GF)y)==1)
-                pts[n++]=(Point){(GF)x,(GF)y};
+    {
+        static GF FROB[MAX_M][MAX_M]; /* FROB[e][i] = (2^i)^(2^e) */
+        for (int e=0;e<BB_C;++e) for (int i=0;i<BB_C;++i) FROB[e][i]=frob2((GF)(1u<<i),e);
+        GF T[MAX_M], invx[MAX_M];
+        for (int x=1; x<GQ; ++x) {
+            GF xx=(GF)x;
+            for (int k=0;k<BB_C;++k) invx[k]=ginv(frob2(xx,k));
+            for (int i=0;i<BB_C;++i) {
+                GF sum=0;
+                for (int k=0;k<BB_C;++k)
+                    sum^=gmul(FROB[(BB_A+k)%BB_C][i],invx[k]);
+                T[i]=sum;
+            }
+            GF y=0, val=0;
+            for (unsigned idx=1; idx<(unsigned)GQ; ++idx) {
+                int bit=__builtin_ctz(idx);
+                y^=(GF)(1u<<bit); val^=T[bit];
+                if (val==1) {
+                    if (pn==pcap) {
+                        pcap*=2;
+                        Point *np=realloc(pts,pcap*sizeof(*pts));
+                        if (!np) { fprintf(stderr,"Point allocation failed.\n"); return 1; }
+                        pts=np;
+                    }
+                    pts[pn++]=(Point){xx,y};
+                }
+            }
+        }
+    }
+    int n=(int)pn;
+    /* 走査結果の確認: 定義式 bbgs_define_equation で一部の点を再検証 */
+    for (int p=0; p<n; p+=(n/64>0?n/64:1))
+        if (bbgs_define_equation(pts[p].x,pts[p].y)!=1) {
+            fprintf(stderr,"Point enumeration inconsistent with the defining equation.\n");
+            return 1;
+        }
 
     int64_t qc=(int64_t)1<<BB_C;
     int64_t genus=((qc-2)*(((int64_t)1<<(a-1))+((int64_t)1<<(b-1))-2)+(qc-2))/2;
@@ -639,11 +699,24 @@ int main(int argc, char **argv)
     printf("Defining equation: sum[k=0..%d] y^(2^(a+k))/x^(2^k) = 1\n",BB_C-1);
     printf("Affine candidate points n=%d; genus formula g=%lld\n",n,(long long)genus);
     if (!n) { fprintf(stderr,"No affine rational points.\n"); free(pts); return 1; }
+    if (autop) {
+        /* t: 2^(b-1)*t - 2g + 1 >= errors,  v: l(A) = #{i in [-v,0] admissible} >= errors+1 */
+        int64_t d=(int64_t)1<<(b-1);
+        int64_t tt=(2*genus-1+errors+d-1)/d;
+        int64_t cntA=0, vv=0, j0, k0;
+        for (vv=0; vv<=(int64_t)64*genus+100000; ++vv) {
+            if (bb_cand_ok(-vv,0,0,0,&j0,&k0)) ++cntA;
+            if (cntA>=errors+1) break;
+        }
+        t=(int)tt; v=(int)vv;
+        printf("auto: v=%d, t=%d (for %d errors)\n",v,t,errors);
+    }
+    if (!fast && n>20000) printf("Note: n=%d is large; --fast 1 is recommended.\n",n);
 
     /* 補助関数 z,w の値を全点で一度だけ計算 */
     PZ=calloc((size_t)n,sizeof(GF)); PW=calloc((size_t)n,sizeof(GF));
     for (int p=0;p<n;p++)
-        if (!bb_point_data(pts[p].x,pts[p].y,&PZ[p],&PW[p])) {
+        if (!bb_point_data_nc(pts[p].x,pts[p].y,&PZ[p],&PW[p])) {
             fprintf(stderr,"Some evaluation points are incompatible with the BBGS auxiliary functions (u=0).\n");
             free(pts); return 1;
         }
