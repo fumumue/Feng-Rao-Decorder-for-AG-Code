@@ -1,538 +1,823 @@
 /*
- * BBGS tower: first non-rational level E_2, basic syndrome decoder
- * with error-locator CURVES.   Binary characteristic prototype: p=2,
- * n=2m+1, m=1 or 2.
+ * BBGS one-point/ECP decoder - single-file configurable prototype (extended)
  *
- * E_2/F_(2^n)(x) is defined by
- *   Tr_j(y / x^(2^k)) + Tr_k(y^(2^j) / x) = 1,
- * where j=m if m is odd, otherwise j=m+1, and k=n-j.
- * We enumerate affine rational points with x != 0.
+ * Curve family: binary BBGS model (q=2), parameter pair (a,b), c=a+b.
+ * The defining relation is centralized in bbgs_define_equation()/bb_H().
+ * The shared ECP decoder does not depend on a,b or on the curve equation.
  *
- * Parity-check matrix H : all monomials x^a y^b of total degree <= u+v
- * evaluated at the points.  Syndrome S_(a,b) = sum_p H[(a,b)][p] * r[p].
+ * Build:   cc -O2 -std=c11 -Wall -Wextra -o bbgs_ag_decoder bbgs_ag_decoder.c
+ * Example: ./bbgs_ag_decoder --a 3 --b 2 --v 149 --t 80 --errors 10
  *
- * Syndrome matrix  M[(a2,b2)][(a1,b1)] = S_(a1+a2, b1+b2)
- *   rows   : monomials of degree <= v
- *   columns: monomials of degree <= d   (d = 0..u)
- * A kernel vector c gives L(x,y) = sum c_i x^a_i y^b_i which vanishes at
- * all error positions.  L(x,y)=0 is an "error-locator curve"; its
- * rational intersection points with E_2 contain the error positions.
+ * Extensions in this version
+ *   - any a>b (a odd, gcd(a,b)=1, b>=2) with c=a+b <= 12, up to 256 injected errors
+ *   - --auto 1 chooses v,t automatically from --errors
+ *   - error locator function(s) printed as polynomial in x,z,w
+ *   - table of error positions / values (decoded vs injected)
+ *   - --list 0|1 and --locator N control the report (first trial only)
  *
- * Three ways to get the error positions are compared:
- *   [A] ONE locator curve: the kernel combination whose intersection with
- *       E_2 has the fewest rational points (greedy search).
- *   [B] intersection of several random combinations of the kernel basis.
- *   [C] common zeros of the whole kernel basis (original method).
- * For each method the smallest degree d that works is used.
- * Error values are then solved from the syndromes and verified.
+ * Note: the basis/genus formulas were derived for a=b+1; for other a>b they are
+ * used as-is and NOT proven here. The self-checks (A*B subset H, decode results)
+ * are evidence only. For large n (c>=9) use --fast 1.
  *
- * NOTE: this is still an experimental affine evaluation-code construction,
- *       NOT a completed RR/Feng-Rao (majority voting) decoder.
- *
- * Build:  gcc -O2 -o bbgs_e2_locator bbgs_e2_locator.c
- * Run  :  ./bbgs_e2_locator --m 2 --u 4 --v 4 --errors 3 --seed 1
+ * Current algebraic scope: the BBGS family and the matching Hu Omega-lattice
+ * basis formulas below. Replacing bb_H alone by an unrelated equation does
+ * NOT preserve those basis/divisor identities; a new family needs matching
+ * bb_point_data() and bb_build_basis() formulas too.
  */
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#define MAXN 1024
-#define MAXMON 256
+#define MAX_M 12
+#define MAX_ERRORS 256
 
-typedef struct { int x, y; } Point;
-typedef struct { int a, b; } Mon;
+typedef uint16_t GF;
 
-static int Q, J, K, IRR;
-static Point pts[MAXN];
-static int npts;
+static int GQ; /* q = 2^m */
+static GF EXPT[2 * (1 << MAX_M)];
+static int LOGT[1 << MAX_M];
 
-/* ---------- GF(2^n) ---------- */
-static int MUL[32][32], INV[32];
-
-static int gf_mul_slow(int a, int b) {
-    int r = 0;
-    while (b) {
-        if (b & 1) r ^= a;
-        b >>= 1;
-        a <<= 1;
-        if (a & Q) a ^= IRR;
+static int gf_init(int m)
+{
+    /* primitive polynomials x^m + ... for m = 2..13 */
+    static const unsigned poly[MAX_M + 1] = {0, 0, 0x7, 0xB, 0x13, 0x25, 0x43, 0x89, 0x11D, 0x211, 0x409,
+                                             0x805, 0x1053};
+    if (m < 2 || m > MAX_M)
+        return 0;
+    GQ = 1 << m;
+    unsigned x = 1;
+    for (int i = 0; i < GQ - 1; ++i)
+    {
+        EXPT[i] = (GF)x;
+        LOGT[x] = i;
+        x <<= 1;
+        if (x & (unsigned)GQ)
+            x ^= poly[m];
     }
-    return r & (Q - 1);
-}
-static void init_tables(void) {
-    for (int a = 0; a < Q; ++a)
-        for (int b = 0; b < Q; ++b) MUL[a][b] = gf_mul_slow(a, b);
-    INV[0] = 0;
-    for (int a = 1; a < Q; ++a)
-        for (int b = 1; b < Q; ++b)
-            if (MUL[a][b] == 1) { INV[a] = b; break; }
-}
-static inline int gf_mul(int a, int b) { return MUL[a][b]; }
-static int gf_pow(int a, int e) {
-    int r = 1;
-    while (e) {
-        if (e & 1) r = gf_mul(r, a);
-        a = gf_mul(a, a);
-        e >>= 1;
-    }
-    return r;
-}
-static inline int gf_inv(int a) { return INV[a]; }
-static int trace2(int z, int r) {
-    int s = 0;
-    for (int i = 0; i < r; ++i) { s ^= z; z = gf_mul(z, z); }
-    return s;
-}
-static int init_field(int m) {
-    if (m == 1) { Q = 8; IRR = 0x0b; }
-    else if (m == 2) { Q = 32; IRR = 0x25; }
-    else return 0;
-    J = (m % 2) ? m : m + 1;
-    K = 2 * m + 1 - J;
-    init_tables();
+    for (int i = GQ - 1; i < 2 * (GQ - 1); ++i)
+        EXPT[i] = EXPT[i - (GQ - 1)];
     return 1;
 }
-
-/* ---------- curve E_2 and its rational points ---------- */
-static int bbgs_equation(int x, int y) {
-    int xpk = gf_pow(x, 1 << K);
-    int term1 = trace2(gf_mul(y, gf_inv(xpk)), J);
-    int ypj = gf_pow(y, 1 << J);
-    int term2 = trace2(gf_mul(ypj, gf_inv(x)), K);
-    return (term1 ^ term2) == 1;
+static inline GF gmul(GF a, GF b)
+{
+    return (a && b) ? EXPT[LOGT[a] + LOGT[b]] : 0;
 }
-static void enumerate_points(void) {
-    npts = 0;
-    for (int x = 1; x < Q; ++x)
-        for (int y = 0; y < Q; ++y)
-            if (bbgs_equation(x, y) && npts < MAXN) pts[npts++] = (Point){x, y};
+static inline GF ginv(GF a)
+{
+    return a ? EXPT[(GQ - 1) - LOGT[a]] : 0;
 }
-
-/* ---------- monomials ---------- */
-static int monomials(int d, Mon *out) {
-    int n = 0;
-    for (int a = 0; a <= d; ++a)
-        for (int b = 0; b + a <= d; ++b) out[n++] = (Mon){a, b};
-    return n;
-}
-static int eval_mon(Mon m, Point p) {
-    return gf_mul(gf_pow(p.x, m.a), gf_pow(p.y, m.b));
-}
-static int mon_index(const Mon *H, int n, int a, int b) {
-    for (int h = 0; h < n; ++h)
-        if (H[h].a == a && H[h].b == b) return h;
-    return -1;
-}
-/* print sum c[i] x^a y^b  (coefficients are field elements as integers) */
-static void print_poly(const Mon *mon, const int *c, int n) {
-    int first = 1;
-    for (int i = n - 1; i >= 0; --i) {
-        if (!c[i]) continue;
-        if (!first) printf(" + ");
-        first = 0;
-        printf("%d", c[i]);
-        if (mon[i].a) printf("*x^%d", mon[i].a);
-        if (mon[i].b) printf("*y^%d", mon[i].b);
-    }
-    if (first) printf("0");
+static GF gpow(GF a, int e)
+{
+    if (e == 0)
+        return 1;
+    if (!a)
+        return 0;
+    return EXPT[(int)(((long)LOGT[a] * e) % (GQ - 1))];
 }
 
-/* ---------- linear algebra over GF(2^n) ---------- */
-static int rref(int *A, int rows, int cols, int *piv) {
-    int r = 0;
-    for (int c = 0; c < cols && r < rows; ++c) {
-        int pr = -1;
-        for (int i = r; i < rows; ++i)
-            if (A[i * cols + c]) { pr = i; break; }
-        if (pr < 0) continue;
-        if (pr != r)
-            for (int j = 0; j < cols; ++j) {
-                int t = A[r * cols + j];
-                A[r * cols + j] = A[pr * cols + j];
-                A[pr * cols + j] = t;
+/* 元を g^k (g = 生成元) の形で表示 */
+static void pe(GF x)
+{
+    if (!x) printf("0");
+    else printf("g^%d", LOGT[x]);
+}
+
+static uint64_t rng_state;
+static uint64_t rnd(void)
+{
+    uint64_t z = (rng_state += 0x9E3779B97F4A7C15ULL);
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+    return z ^ (z >> 31);
+}
+
+/* ------------------------------------------------------------------ */
+/* 線形代数 (行列は行優先の1次元配列)                                   */
+/* ------------------------------------------------------------------ */
+static int rref(GF *m, int rows, int cols, int *piv)
+{
+    int rank = 0;
+    for (int col = 0; col < cols && rank < rows; ++col)
+    {
+        int p = rank;
+        while (p < rows && m[(size_t)p * cols + col] == 0)
+            ++p;
+        if (p == rows)
+            continue;
+        if (p != rank)
+            for (int j = 0; j < cols; ++j)
+            {
+                GF t = m[(size_t)rank * cols + j];
+                m[(size_t)rank * cols + j] = m[(size_t)p * cols + j];
+                m[(size_t)p * cols + j] = t;
             }
-        int iv = gf_inv(A[r * cols + c]);
-        for (int j = 0; j < cols; ++j) A[r * cols + j] = gf_mul(iv, A[r * cols + j]);
+        GF s = ginv(m[(size_t)rank * cols + col]);
+        for (int j = 0; j < cols; ++j)
+            m[(size_t)rank * cols + j] = gmul(m[(size_t)rank * cols + j], s);
         for (int i = 0; i < rows; ++i)
-            if (i != r && A[i * cols + c]) {
-                int f = A[i * cols + c];
-                for (int j = 0; j < cols; ++j)
-                    A[i * cols + j] ^= gf_mul(f, A[r * cols + j]);
-            }
-        piv[r++] = c;
-    }
-    return r;
-}
-/* kernel basis of A (rows x cols): returns dimension, vectors in out */
-static int nullspace(const int *A, int rows, int cols, int *out) {
-    static int R[MAXMON * MAXMON];
-    int piv[MAXMON], is_piv[MAXMON];
-    if (rows * cols > MAXMON * MAXMON || cols > MAXMON) return -1;
-    memset(is_piv, 0, sizeof is_piv);
-    memcpy(R, A, sizeof(int) * rows * cols);
-    int rank = rref(R, rows, cols, piv);
-    for (int i = 0; i < rank; i++) is_piv[piv[i]] = 1;
-    int nv = 0;
-    for (int f = 0; f < cols; f++)
-        if (!is_piv[f]) {
-            int *v = out + nv * cols;
-            memset(v, 0, sizeof(int) * cols);
-            v[f] = 1;
-            for (int i = 0; i < rank; i++) v[piv[i]] = R[i * cols + f];
-            nv++;
+        {
+            if (i == rank)
+                continue;
+            GF f = m[(size_t)i * cols + col];
+            if (!f)
+                continue;
+            for (int j = 0; j < cols; ++j)
+                m[(size_t)i * cols + j] ^= gmul(f, m[(size_t)rank * cols + j]);
         }
-    return nv;
-}
-/* unique solution of A x = rhs (A: rows x cols) */
-static int solve_unique(const int *A, int rows, int cols, const int *rhs, int *x) {
-    static int aug[MAXMON * (MAXN + 1)];
-    int piv[MAXN + 1];
-    if (rows * (cols + 1) > MAXMON * (MAXN + 1)) return 0;
-    for (int i = 0; i < rows; i++) {
-        for (int j = 0; j < cols; j++) aug[i * (cols + 1) + j] = A[i * cols + j];
-        aug[i * (cols + 1) + cols] = rhs[i];
+        piv[rank++] = col;
     }
-    int rank = rref(aug, rows, cols + 1, piv);
-    for (int i = 0; i < rank; i++) if (piv[i] == cols) return 0;
-    int cr = 0;
-    for (int i = 0; i < rank; i++) if (piv[i] < cols) cr++;
-    if (cr < cols) return 0;
-    for (int j = 0; j < cols; j++) x[j] = 0;
-    for (int i = 0; i < rank; i++) if (piv[i] < cols) x[piv[i]] = aug[i * (cols + 1) + cols];
-    return 1;
+    return rank;
 }
 
-static unsigned rng = 1;
-static unsigned rnd(void) { rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5; return rng; }
-
-/* ---------- parity-check matrix (built once) ---------- */
-static Mon Hmon[MAXMON];
-static int nh;
-static int H[MAXMON * MAXN];
-
-static int setup_code(int u, int v) {
-    nh = monomials(u + v, Hmon);
-    if (nh > MAXMON || nh * npts > MAXMON * MAXN) return 0;
-    for (int h = 0; h < nh; h++)
-        for (int p = 0; p < npts; p++) H[h * npts + p] = eval_mon(Hmon[h], pts[p]);
-    return 1;
-}
-
-/* ---------- error-locator machinery ---------- */
-
-/* kernel of the syndrome matrix with columns = monomials of degree <= d,
-   rows = monomials of degree <= v.  returns kernel dim, -1 if na > nb */
-static int kernel_of_degree(const int *syn, int d, int v, Mon *Amon, int *aidx,
-                            int *na_out, int *loc) {
-    static Mon Bmon[MAXMON];
-    static int MM[MAXMON * MAXMON];
-    int nb = monomials(v, Bmon);
-    int na = monomials(d, Amon);
-    if (na > nb) return -1;
-    for (int i = 0; i < na; ++i) aidx[i] = mon_index(Hmon, nh, Amon[i].a, Amon[i].b);
-    for (int i = 0; i < na; ++i)
-        for (int j = 0; j < nb; ++j) {
-            int idx = mon_index(Hmon, nh, Amon[i].a + Bmon[j].a, Amon[i].b + Bmon[j].b);
-            if (idx < 0) return -1;
-            MM[j * na + i] = syn[idx];
-        }
-    *na_out = na;
-    return nullspace(MM, nb, na, loc);
-}
-
-/* values of the kernel basis functions at all points: VZ[z][p] */
-static int VZ[MAXMON][MAXN];
-static void eval_basis(const int *aidx, int na, const int *loc, int nk) {
-    for (int z = 0; z < nk; ++z)
-        for (int p = 0; p < npts; ++p) {
-            int s = 0;
-            for (int a = 0; a < na; ++a) {
-                int c = loc[z * na + a];
-                if (c) s ^= gf_mul(c, H[aidx[a] * npts + p]);
-            }
-            VZ[z][p] = s;
-        }
-}
-
-/* [A] ONE locator curve: greedy search for the kernel combination
-   with the fewest zeros on the point set.  c: coefficients (na),
-   zeros: point indices.  returns number of zeros. */
-static int single_locator(const int *loc, int na, int nk, int *c, int *zeros) {
-    static int vc[MAXN];
-    memset(c, 0, sizeof(int) * na);
-    memset(vc, 0, sizeof(int) * npts);
-    int best = npts + 1;
-    for (;;) {
-        int bz = -1, bl = 0, bn = best;
-        for (int z = 0; z < nk; ++z)
-            for (int lam = 1; lam < Q; ++lam) {
-                int nz = 0;
-                for (int p = 0; p < npts; ++p)
-                    if (vc[p] == gf_mul(lam, VZ[z][p])) nz++;
-                if (nz < bn) {
-                    int nonzero = 0;
-                    for (int a = 0; a < na && !nonzero; ++a)
-                        if (c[a] != gf_mul(lam, loc[z * na + a])) nonzero = 1;
-                    if (nonzero) { bn = nz; bz = z; bl = lam; }
-                }
-            }
-        if (bz < 0) break;
-        for (int a = 0; a < na; ++a) c[a] ^= gf_mul(bl, loc[bz * na + a]);
-        for (int p = 0; p < npts; ++p) vc[p] ^= gf_mul(bl, VZ[bz][p]);
-        best = bn;
+/* in (rows x cols) の右零空間の基底 (dim x cols) を返す */
+static GF *nullspace(const GF *in, int rows, int cols, int *dim)
+{
+    GF *m = malloc(((size_t)rows * cols + 1) * sizeof(GF));
+    int *piv = malloc(sizeof(int) * (rows + 1));
+    int *isp = calloc(cols + 1, sizeof(int));
+    memcpy(m, in, (size_t)rows * cols * sizeof(GF));
+    int rank = rref(m, rows, cols, piv);
+    for (int i = 0; i < rank; ++i)
+        isp[piv[i]] = 1;
+    *dim = cols - rank;
+    GF *basis = calloc((size_t)(*dim) * cols + 1, sizeof(GF));
+    int d = 0;
+    for (int fc = 0; fc < cols; ++fc)
+    {
+        if (isp[fc])
+            continue;
+        basis[(size_t)d * cols + fc] = 1;
+        for (int r = 0; r < rank; ++r)
+            basis[(size_t)d * cols + piv[r]] = m[(size_t)r * cols + fc]; /* 標数2: -x = x */
+        ++d;
     }
-    int n = 0;
-    for (int p = 0; p < npts; ++p) if (!vc[p]) zeros[n++] = p;
-    return n;
+    free(m);
+    free(piv);
+    free(isp);
+    return basis;
 }
 
-/* [B] intersection of the zero sets of ntry random combinations */
-static int combo_zeros(int nk, int ntry, int *zeros) {
-    static char alive[MAXN];
-    memset(alive, 1, npts);
-    for (int t = 0; t < ntry; ++t) {
-        int lam[MAXMON];
-        for (int z = 0; z < nk; ++z) lam[z] = 1 + rnd() % (Q - 1);
-        for (int p = 0; p < npts; ++p) {
-            if (!alive[p]) continue;
-            int s = 0;
-            for (int z = 0; z < nk; ++z) s ^= gf_mul(lam[z], VZ[z][p]);
-            if (s) alive[p] = 0;
-        }
-    }
-    int n = 0;
-    for (int p = 0; p < npts; ++p) if (alive[p]) zeros[n++] = p;
-    return n;
+typedef struct { GF x, y; } Point;
+
+typedef struct
+{
+    int cnt;
+    GF *v; /* cnt x n */
+    int64_t *ei, *ej, *ek; /* BBGS monomial exponents; NULL for plane bases */
+} Basis;
+
+typedef struct
+{
+    int n;
+    Basis A, B, H;
+} Code;
+
+static GF *PZ, *PW;          /* 各評価点での補助関数 z, w の値 */
+static const Point *PTS;     /* 評価点 */
+
+/* 基底 b の i 番目の関数の点 p での値。v を持たない基底は単項式から直接計算 */
+static inline GF bval(const Basis *b, int n, int i, int p)
+{
+    if (b->v) return b->v[(size_t)i * n + p];
+    if (!PZ[p]) return 0;
+    int em = (int)((b->ei[i] % (GQ - 1) + (GQ - 1)) % (GQ - 1));
+    int jm = (int)((b->ej[i] % (GQ - 1) + (GQ - 1)) % (GQ - 1));
+    int km = (int)((b->ek[i] % (GQ - 1) + (GQ - 1)) % (GQ - 1));
+    return gmul(gpow(PTS[p].x, em), gmul(gpow(PZ[p], jm), gpow(PW[p], km)));
 }
 
-/* [C] common zeros of the whole kernel basis */
-static int full_zeros(int nk, int *zeros) {
-    int n = 0;
-    for (int p = 0; p < npts; ++p) {
-        int ok = 1;
-        for (int z = 0; z < nk && ok; ++z) if (VZ[z][p]) ok = 0;
-        if (ok) zeros[n++] = p;
-    }
-    return n;
-}
+/* 復号の途中結果 (誤り位置関数の表示用) */
+typedef struct
+{
+    int dimk;   /* 核の次元 */
+    GF *ker;    /* dimk x K1 : L(A) の基底に関する係数 */
+    int nz;     /* 核の共通零点の個数 */
+    int *Z;     /* その点の番号 */
+} Report;
 
-/* solve error values on the candidate positions and verify all checks */
-static int solve_candidates(const int *syn, const int *cand, int nc, int *e) {
-    static int AZ[MAXMON * MAXN];
-    int sol[MAXN];
-    if (nc <= 0 || nc > nh) return 0;
-    for (int h = 0; h < nh; ++h)
-        for (int z = 0; z < nc; ++z) AZ[h * nc + z] = H[h * npts + cand[z]];
-    if (!solve_unique(AZ, nh, nc, syn, sol)) return 0;
-    memset(e, 0, sizeof(int) * npts);
-    for (int z = 0; z < nc; ++z) e[cand[z]] = sol[z];
-    for (int h = 0; h < nh; ++h) {            /* verify */
-        int s = 0;
-        for (int p = 0; p < npts; ++p) if (e[p]) s ^= gf_mul(H[h * npts + p], e[p]);
-        if (s != syn[h]) return 0;
+static int in_code(const Code *c, const GF *w)
+{
+    for (int r = 0; r < c->H.cnt; ++r)
+    {
+        GF z = 0;
+        for (int p = 0; p < c->n; ++p)
+            z ^= gmul(c->H.v[(size_t)r * c->n + p], w[p]);
+        if (z)
+            return 0;
     }
     return 1;
 }
 
-/* ---------- decoder driver ---------- */
-#define NMETH 3
-static const char *mname[NMETH] = {
-    "A: 単一ロケーター曲線",
-    "B: 乱数結合の交差",
-    "C: 核全体の共通零点"
-};
-typedef struct { int solved, correct, deg, ncand; } Res;
-static Res res[NMETH];
-static int errv[NMETH][MAXN];
-/* the single curve of method A */
-static int curveC[MAXMON], curveNa;
-static Mon curveMon[MAXMON];
-
-/* ロケーター関数 L(x,y) を表示し、E2 との有理交点(零点)も列挙する。
-   mon, c, na : L の単項式列・係数・項数
-   zeros, nz  : 零点の点インデックスと個数 (zeros=NULL なら列挙しない) */
-static void print_locator(const char *name, const Mon *mon, const int *c, int na,
-                          const int *zeros, int nz) {
-    printf("%s(x,y) = ", name);
-    print_poly(mon, c, na);
-    printf("\n");
-    if (zeros) {
-        printf("  E2との有理交点 %d 個:", nz);
-        for (int i = 0; i < nz; ++i)
-            printf(" (%d,%d)", pts[zeros[i]].x, pts[zeros[i]].y);
-        printf("\n");
+/*
+ * 誤り位置集合 Z 上の誤り値を、シンドローム S_ij = sum_k e_k a_i(Z_k) b_j(Z_k)
+ * から解く。nsel < total のときは (i,j) をランダムに nsel 本だけ使う
+ * (誤り256個でも高速に動かすため)。成功なら 1、sol[0..nz-1] に誤り値。
+ */
+static int solve_rows(const Code *c, const GF *S, const int *Z, int nz,
+                      long total, long nsel, GF *sol)
+{
+    int n = c->n, K2 = c->B.cnt, cols = nz + 1;
+    GF *aug = calloc((size_t)nsel * cols + 1, sizeof(GF));
+    int *piv = malloc(sizeof(int) * (nsel + 1));
+    for (long r = 0; r < nsel; ++r)
+    {
+        long idx = (nsel == total) ? r : (long)(rnd() % (uint64_t)total);
+        int i = (int)(idx / K2), j = (int)(idx % K2);
+        for (int k = 0; k < nz; ++k)
+            aug[(size_t)r * cols + k] =
+                gmul(c->A.v[(size_t)i * n + Z[k]], bval(&c->B, n, j, Z[k]));
+        aug[(size_t)r * cols + nz] = S[(size_t)i * K2 + j];
     }
+    int rank = rref(aug, (int)nsel, cols, piv);
+    int good = (rank == nz);
+    for (int r = 0; r < rank && good; ++r)
+        if (piv[r] == nz)
+            good = 0; /* 矛盾した連立方程式 */
+    if (good)
+        for (int k = 0; k < nz; ++k)
+            sol[k] = aug[(size_t)k * cols + nz];
+    free(aug);
+    free(piv);
+    return good;
 }
 
-/* エラー位置と誤り値を表示する。
-   e    : 推定した誤りベクトル (長さ npts)
-   truth: 真の誤りベクトル (比較しないなら NULL) */
-static void print_error_positions(const int *e, const int *truth) {
-    int w = 0;
-    printf("エラー位置:\n");
-    for (int p = 0; p < npts; ++p) {
-        if (!e[p]) continue;
-        printf("  [%3d] (x,y)=(%2d,%2d)  value=%2d", p, pts[p].x, pts[p].y, e[p]);
-        if (truth) printf("  %s", truth[p] == e[p] ? "OK" : "NG");
-        printf("\n");
-        ++w;
+/* 成功なら 1 を返し out に訂正語, *nerr に見つけた誤り個数。rep != NULL なら途中結果を格納 */
+static int decode(const Code *c, const GF *rcv, GF *out, int *nerr, Report *rep)
+{
+    int n = c->n, K1 = c->A.cnt, K2 = c->B.cnt;
+    int ok = 0;
+    GF *S = calloc((size_t)K1 * K2 + 1, sizeof(GF));
+    GF *ST = calloc((size_t)K1 * K2 + 1, sizeof(GF));
+    GF *AR = malloc((size_t)n*sizeof(GF));
+    int allzero = 1;
+    *nerr = 0;
+    memcpy(out, rcv, (size_t)n * sizeof(GF));
+
+    /* rcv の非零位置だけを使ってシンドロームを計算 (疎な誤りで高速) */
+    int *NZP = malloc(sizeof(int) * (size_t)(n + 1));
+    int nnz = 0;
+    for (int p = 0; p < n; ++p)
+        if (rcv[p]) NZP[nnz++] = p;
+    GF *BN = malloc((size_t)K2 * nnz * sizeof(GF) + 1);
+    if (!BN) { free(NZP); goto done; }
+    for (int j = 0; j < K2; ++j)
+        for (int s2 = 0; s2 < nnz; ++s2)
+            BN[(size_t)j * nnz + s2] = bval(&c->B, n, j, NZP[s2]);
+    for (int i = 0; i < K1; ++i)
+    {
+        for (int s2 = 0; s2 < nnz; ++s2)
+            AR[s2] = gmul(rcv[NZP[s2]], c->A.v[(size_t)i * n + NZP[s2]]);
+        for (int j = 0; j < K2; ++j)
+        {
+            GF z = 0;
+            const GF *bj = BN + (size_t)j * nnz;
+            for (int s2 = 0; s2 < nnz; ++s2)
+                z ^= gmul(AR[s2], bj[s2]);
+            S[(size_t)i * K2 + j] = z;
+            ST[(size_t)j * K1 + i] = z;
+            if (z)
+                allzero = 0;
+        }
     }
-    if (truth)                      /* 見逃した誤りも表示 */
-        for (int p = 0; p < npts; ++p)
-            if (truth[p] && !e[p])
-                printf("  [%3d] (x,y)=(%2d,%2d)  真の誤り value=%2d を見逃し\n",
-                       p, pts[p].x, pts[p].y, truth[p]);
-    printf("  推定誤り数 = %d\n", w);
-}
-
-
-static void decode_all(const int *received, int u, int v, int verbose) {
-    int syn[MAXMON];
-    memset(res, 0, sizeof res);
-    for (int h = 0; h < nh; h++) {
-        syn[h] = 0;
-        for (int p = 0; p < npts; p++) if (received[p]) syn[h] ^= gf_mul(H[h * npts + p], received[p]);
+    free(BN);
+    free(NZP);
+    if (allzero)
+    {
+        ok = in_code(c, rcv);
+        goto done;
     }
-    static int loc[MAXMON * MAXMON];
-    Mon Amon[MAXMON];
-    int aidx[MAXMON];
-    int shown = 0;
-    for (int d = 0; d <= u; ++d) {
-        int na = 0, nk = kernel_of_degree(syn, d, v, Amon, aidx, &na, loc);
-        if (nk < 0) break;           /* na > nb: conditions insufficient */
-        if (nk == 0) continue;
-        eval_basis(aidx, na, loc, nk);
 
-        if (verbose && !shown) {
-            shown = 1;
-            printf("最小次数のロケーター曲線: d=%d, 核の次元=%d\n", d, nk);
-            for (int z = 0; z < nk && z < 4; ++z) {
-                int n = 0;
-                for (int p = 0; p < npts; ++p) if (!VZ[z][p]) n++;
-                printf("  L%d(x,y) = ", z + 1);
-                print_poly(Amon, loc + z * na, na);
-                printf("   [E2との有理交点 %d 個]\n", n);
+    int dimk;
+    GF *ker = nullspace(ST, K2, K1, &dimk);
+    if (dimk == 0)
+    {
+        free(ker);
+        goto done;
+    }
+    int *Z = malloc(sizeof(int) * n);
+    int nz = 0;
+    for (int p = 0; p < n; ++p)
+    {
+        int common = 1;
+        for (int v = 0; v < dimk && common; ++v)
+        {
+            GF z = 0;
+            for (int i = 0; i < K1; ++i)
+                z ^= gmul(ker[(size_t)v * K1 + i], c->A.v[(size_t)i * n + p]);
+            if (z)
+                common = 0;
+        }
+        if (common)
+            Z[nz++] = p;
+    }
+    if (rep)
+    {
+        rep->dimk = dimk;
+        rep->ker = malloc((size_t)dimk * K1 * sizeof(GF) + 1);
+        memcpy(rep->ker, ker, (size_t)dimk * K1 * sizeof(GF));
+        rep->nz = nz;
+        rep->Z = malloc(sizeof(int) * (nz + 1));
+        memcpy(rep->Z, Z, sizeof(int) * nz);
+    }
+    free(ker);
+    if (nz == 0 || (long)nz > (long)K1 * K2)
+    {
+        free(Z);
+        goto done;
+    }
+    {
+        long total = (long)K1 * K2;
+        long nsel = 3L * nz + 64;
+        if (nsel > total) nsel = total;
+        GF *sol = malloc(sizeof(GF) * (nz + 1));
+        int good = solve_rows(c, S, Z, nz, total, nsel, sol);
+        if (!good && nsel < total)
+            good = solve_rows(c, S, Z, nz, total, total, sol);
+        if (good)
+        {
+            for (int k = 0; k < nz; ++k)
+                out[Z[k]] ^= sol[k];
+            if (in_code(c, out))
+            {
+                ok = 1;
+                for (int k = 0; k < nz; ++k)
+                    if (sol[k])
+                        ++*nerr;
             }
         }
+        free(sol);
+    }
+    free(Z);
+done:
+    free(S);
+    free(ST);
+    free(AR);
+    return ok;
+}
 
-        int allsolved = 1;
-        for (int m = 0; m < NMETH; ++m) {
-            if (res[m].solved) continue;
-            int cand[MAXN], nc = 0, c[MAXMON];
-            if (m == 0) nc = single_locator(loc, na, nk, c, cand);
-            else if (m == 1) nc = combo_zeros(nk, 4, cand);
-            else nc = full_zeros(nk, cand);
-            if (solve_candidates(syn, cand, nc, errv[m])) {
-                res[m].solved = 1;
-                res[m].deg = d;
-                res[m].ncand = nc;
-                res[m].correct = (memcmp(errv[m], received, sizeof(int) * npts) == 0);
-                if (m == 0) {
-                    curveNa = na;
-                    memcpy(curveC, c, sizeof(int) * na);
-                    memcpy(curveMon, Amon, sizeof(Mon) * na);
+static int parse_int(const char *s, int *v)
+{
+    char *e = NULL;
+    long x = strtol(s, &e, 10);
+    if (!s[0] || !e || *e || x < 0 || x > 1000000)
+        return 0;
+    *v = (int)x;
+    return 1;
+}
+
+/* ---------------- BBGS (binary q=2) ---------------- */
+static int BB_A, BB_B, BB_C;
+static GF frob2(GF x, int k);
+
+/*
+ * BBGS defining relation:
+ *   H(x,y) = sum_{k=0}^{c-1} y^(2^(a+k)) / x^(2^k) = 1.
+ * This is the single place where the family equation is assembled.
+ * The Frobenius exponents are reduced modulo c in GF(2^c).
+ */
+static GF bbgs_define_equation(GF x, GF y)
+{
+    GF sum = 0;
+    for (int k = 0; k < BB_C; ++k) {
+        int e = (BB_A + k) % BB_C;
+        GF numerator = frob2(y, e);
+        GF denominator = frob2(x, k);
+        if (!denominator) return 0;
+        sum ^= gmul(numerator, ginv(denominator));
+    }
+    return sum;
+}
+
+static GF frob2(GF x, int k) {
+    while (k--) x = gmul(x,x);
+    return x;
+}
+/* 曲線上の点であることが既知の場合の補助関数値 (H の再評価を省く) */
+static int bb_point_data_nc(GF x,GF y,GF *z,GF *w) {
+    /* p=2, a odd, so a^{-1}=1 in F_2. */
+    GF u = 1 ^ gmul(frob2(y,BB_A),ginv(x))
+                  ^ gmul(frob2(y,1),ginv(frob2(x,BB_A)));
+    if (!u) return 0;
+    *z=gmul(y,ginv(frob2(x,BB_B)));
+    *w=gmul(gmul(frob2(y,BB_A),ginv(x)),ginv(u));
+    return 1;
+}
+
+static int64_t floor_div_posden(int64_t x,int64_t d) {
+    if (x>=0) return x/d;
+    return - ((-x+d-1)/d);
+}
+static int64_t ceil_div_posden(int64_t x,int64_t d) {
+    return -floor_div_posden(-x,d);
+}
+/* i が基底に入るか判定し、対応する j,k を返す */
+static int bb_cand_ok(int64_t i,int rdiv,int sdiv,int tdiv,int64_t *pj,int64_t *pk) {
+    const int64_t Nc=((int64_t)1<<BB_C)-1;
+    const int64_t Nb=((int64_t)1<<BB_B)-1;
+    int64_t j=ceil_div_posden((((int64_t)1<<BB_A)*i)-sdiv,Nc);
+    int64_t k=ceil_div_posden(-i-rdiv,Nc);
+    int64_t lhs=(((int64_t)1<<(BB_A-1))*Nb)*i
+                - (((int64_t)1<<(BB_B-1))*Nc)*j + tdiv;
+    int64_t rhs=((((int64_t)1<<(BB_A-1))-1)*Nc)*k;
+    *pj=j; *pk=k;
+    return lhs>=rhs;
+}
+/* Basis from Hu's Omega lattice: x^i z^j w^k.
+ * store=0: 値を保持せず指数だけ記録 (bval で必要時に計算)
+ * check=0: 点上の線形独立性チェックを省略 (deg < n のとき独立と仮定) */
+static Basis bb_build_basis(int v,int rdiv,int sdiv,int tdiv,const Point *pts,int n,int store,int check) {
+    int64_t start=-(int64_t)v;
+    /* Hu, Proposition 6: exact finite i-range; j,k are ceilings from the divisor inequalities. */
+    int64_t stop=(((int64_t)1<<(BB_A-1))-1)*rdiv
+                 + ((int64_t)1<<(BB_B-1))*sdiv + tdiv;
+    int64_t valid=0, j0, k0;
+    for (int64_t i=start;i<=stop;i++) if (bb_cand_ok(i,rdiv,sdiv,tdiv,&j0,&k0)) valid++;
+    int cap=(int)((check && valid>n)?n:valid), rank=0;
+    GF *ech=NULL,*vec=NULL,*raw=NULL,*out=NULL; int *piv=NULL;
+    if (check) { ech=calloc((size_t)cap*n+1,sizeof(GF)); vec=malloc((size_t)n*sizeof(GF)); piv=calloc(cap+1,sizeof(int)); }
+    if (store) out=calloc((size_t)cap*n+1,sizeof(GF));
+    if (store||check) raw=malloc((size_t)n*sizeof(GF));
+    int64_t *ei=calloc(cap+1,sizeof(int64_t)), *ej=calloc(cap+1,sizeof(int64_t)), *ek=calloc(cap+1,sizeof(int64_t));
+    if ((check&&(!ech||!vec||!piv)) || (store&&!out) || ((store||check)&&!raw)) {
+        fprintf(stderr,"Basis allocation failed (%d x %d).\n",cap,n); exit(1);
+    }
+    for (int64_t i=start;i<=stop;i++) {
+        int64_t j,k;
+        if (!bb_cand_ok(i,rdiv,sdiv,tdiv,&j,&k)) continue;
+        if (rank>=cap) break; /* rank==n (check有効時) */
+        if (store||check) {
+            int ei_m=(int)((i%(GQ-1)+(GQ-1))%(GQ-1));
+            int ej_m=(int)((j%(GQ-1)+(GQ-1))%(GQ-1));
+            int ek_m=(int)((k%(GQ-1)+(GQ-1))%(GQ-1));
+            for (int p=0;p<n;p++) {
+                if (!PZ[p]) { raw[p]=0; continue; }
+                raw[p]=gmul(gpow(pts[p].x,ei_m),
+                            gmul(gpow(PZ[p],ej_m), gpow(PW[p],ek_m)));
+            }
+        }
+        if (check) {
+            memcpy(vec,raw,(size_t)n*sizeof(GF));
+            for (int r=0;r<rank;r++) {
+                GF f=vec[piv[r]];
+                if (!f) continue;
+                for (int p=0;p<n;p++) vec[p]^=gmul(f,ech[(size_t)r*n+p]);
+            }
+            int pv=0; while(pv<n && !vec[pv]) pv++;
+            if(pv==n) continue;
+            GF inv=ginv(vec[pv]);
+            for(int p=0;p<n;p++) ech[(size_t)rank*n+p]=gmul(vec[p],inv);
+            piv[rank]=pv;
+        }
+        if (store) memcpy(out+(size_t)rank*n,raw,(size_t)n*sizeof(GF));
+        ei[rank]=i; ej[rank]=j; ek[rank]=k;
+        rank++;
+    }
+    free(ech); free(vec); free(raw); free(piv);
+    Basis bs={rank,out,ei,ej,ek}; return bs;
+}
+static int bb_verify_product_basis(const Basis *A,const Basis *B,const Basis *H,int n) {
+    GF *echelon=malloc((size_t)H->cnt*n*sizeof(GF));
+    GF *prod=malloc((size_t)n*sizeof(GF));
+    int *piv=malloc((size_t)(H->cnt+1)*sizeof(int));
+    if(!echelon||!prod||!piv) { free(echelon);free(prod);free(piv);return 0; }
+    memcpy(echelon,H->v,(size_t)H->cnt*n*sizeof(GF));
+    int rank=rref(echelon,H->cnt,n,piv);
+    if(rank!=H->cnt) { free(echelon);free(prod);free(piv);return 0; }
+    for(int i=0;i<A->cnt;i++) for(int j=0;j<B->cnt;j++) {
+        for(int p=0;p<n;p++) prod[p]=gmul(A->v[(size_t)i*n+p],B->v[(size_t)j*n+p]);
+        for(int r=0;r<rank;r++) {
+            GF f=prod[piv[r]];
+            if(!f) continue;
+            for(int p=0;p<n;p++) prod[p]^=gmul(f,echelon[(size_t)r*n+p]);
+        }
+        for(int p=0;p<n;p++) if(prod[p]) {
+            fprintf(stderr,"A*B row-space test failed at basis pair (%d,%d).\n",i,j);
+            free(echelon);free(prod);free(piv);return 0;
+        }
+    }
+    free(echelon);free(prod);free(piv);return 1;
+}
+
+static int gcd(int x,int y) { while(y){int z=x%y;x=y;y=z;} return x; }
+
+/* ------------------------------------------------------------------ */
+/* 表示: 誤り位置関数と誤りリスト                                       */
+/* ------------------------------------------------------------------ */
+static void print_term(const Code *c, GF co, int i)
+{
+    printf("  ");
+    pe(co);
+    if (c->A.ei)
+        printf(" * x^(%lld) * z^(%lld) * w^(%lld)",
+               (long long)c->A.ei[i], (long long)c->A.ej[i], (long long)c->A.ek[i]);
+    else
+        printf(" * basis[%d]", i);
+}
+
+/*
+ * 誤り位置多項式: 核の基底の先頭(最小)のもの。L(A) の基底は極の位数の昇順に
+ * 並んでいるので、これは「誤り位置で 0 になる関数のうち位数が最小」のもので、
+ * スカラー倍を除いて一意。先頭係数を 1 に正規化し、高位の項から順に表示する。
+ * nloc >= 2 のときは、参考として核の他の元も続けて表示する。
+ */
+static void show_locator(const Code *c, const Report *rep, const int *errpos, int nerrpos, int nloc)
+{
+    int n = c->n, K1 = c->A.cnt;
+    printf("\n==== Error locator polynomial ====\n");
+    if (!rep->ker || rep->dimk == 0) { printf("(no locator found: kernel is empty)\n"); return; }
+    int show = rep->dimk < nloc ? rep->dimk : nloc;
+    for (int v = 0; v < show; ++v)
+    {
+        const GF *co = rep->ker + (size_t)v * K1;
+        int hi = -1, terms = 0, zeros = 0, allerr = 1;
+        for (int i = 0; i < K1; ++i) if (co[i]) { hi = i; ++terms; }
+        if (hi < 0) continue;
+        GF inv = ginv(co[hi]);
+        for (int p = 0; p < n; ++p)
+        {
+            GF z = 0;
+            for (int i = 0; i <= hi; ++i)
+                z ^= gmul(co[i], c->A.v[(size_t)i * n + p]);
+            if (!z) ++zeros;
+        }
+        for (int k = 0; k < nerrpos; ++k)
+        {
+            GF z = 0;
+            for (int i = 0; i <= hi; ++i)
+                z ^= gmul(co[i], c->A.v[(size_t)i * n + errpos[k]]);
+            if (z) allerr = 0;
+        }
+        if (v == 0)
+            printf("Sigma(x,z,w) = monic, minimal-order function vanishing at the error positions\n");
+        else
+            printf("\n(kernel element #%d, for reference)\n", v + 1);
+        printf("leading basis index = %d (uses the first %d functions of L(A)), %d terms, g = primitive element of GF(2^%d)\n",
+               hi, hi + 1, terms, BB_C);
+        int first = 1;
+        for (int i = hi; i >= 0; --i)
+        {
+            if (!co[i]) continue;
+            GF cs = gmul(co[i], inv);
+            printf("%s", first ? "   " : " + ");
+            print_term(c, cs, i);
+            printf("\n");
+            first = 0;
+        }
+        printf("  -> vanishes at %d of %d rational points; vanishes at all decoded error positions: %s\n",
+               zeros, n, allerr ? "yes" : "NO");
+    }
+    printf("\n(kernel dimension = %d; common zero set |Z| = %d points contains the error positions)\n",
+           rep->dimk, rep->nz);
+}
+
+static void show_errors(const Code *c, const Point *pts, const GF *rcv, const GF *dec,
+                        const GF *err, int decoded_ok)
+{
+    int n = c->n, nd = 0, nt = 0, wrong = 0;
+    printf("\n==== Error list ====\n");
+    printf("%5s %6s  %-10s %-10s  %-12s %-12s %s\n",
+           "#", "pos", "x", "y", "decoded e", "injected e", "check");
+    int row = 0;
+    for (int p = 0; p < n; ++p)
+    {
+        GF ed = decoded_ok ? (GF)(rcv[p] ^ dec[p]) : 0;
+        GF et = err[p];
+        if (!ed && !et) continue;
+        ++row;
+        if (ed) ++nd;
+        if (et) ++nt;
+        int match = (ed == et);
+        if (!match) ++wrong;
+        char sd[24], st[24], sx[24], sy[24];
+        if (ed) snprintf(sd, sizeof sd, "g^%d", LOGT[ed]); else snprintf(sd, sizeof sd, "0");
+        if (et) snprintf(st, sizeof st, "g^%d", LOGT[et]); else snprintf(st, sizeof st, "0");
+        snprintf(sx, sizeof sx, "g^%d", LOGT[pts[p].x]);
+        snprintf(sy, sizeof sy, "g^%d", LOGT[pts[p].y]);
+        printf("%5d %6d  %-10s %-10s  %-12s %-12s %s\n", row, p, sx, sy, sd, st,
+               match ? "OK" : (ed ? (et ? "WRONG VALUE" : "FALSE POSITIVE") : "MISSED"));
+    }
+    printf("decoded errors = %d, injected errors = %d, mismatching rows = %d\n", nd, nt, wrong);
+}
+
+int main(int argc, char **argv)
+{
+    int a=3, b=2, v=149, t=80, errors=1, seed=1, trials=1, list=1, locator=1, fast=0, autop=0, force=0;
+    for (int i=1; i<argc; ++i) {
+        int *dst=NULL;
+        if (!strcmp(argv[i],"--a")) dst=&a;
+        else if (!strcmp(argv[i],"--b")) dst=&b;
+        else if (!strcmp(argv[i],"--v")) dst=&v;
+        else if (!strcmp(argv[i],"--t")) dst=&t;
+        else if (!strcmp(argv[i],"--errors")) dst=&errors;
+        else if (!strcmp(argv[i],"--seed")) dst=&seed;
+        else if (!strcmp(argv[i],"--trials")) dst=&trials;
+        else if (!strcmp(argv[i],"--list")) dst=&list;
+        else if (!strcmp(argv[i],"--locator")) dst=&locator;
+        else if (!strcmp(argv[i],"--fast")) dst=&fast;
+        else if (!strcmp(argv[i],"--auto")) dst=&autop;
+        else if (!strcmp(argv[i],"--force")) dst=&force;
+        else if (!strcmp(argv[i],"--help") || !strcmp(argv[i],"-h")) {
+            printf("BBGS binary ECP decoder (q=2)\n"
+                   "Usage: %s [--a A --b B --v V --t T --errors E --trials N --seed S\n"
+                   "          --list 0|1 --locator N --fast 0|1 --auto 0|1 --force 0|1]\n"
+                   "  --force 1    allow a>b+1 (formulas NOT valid there: A*B subset H fails for (5,2))\n"
+                   "  --auto 1     choose v,t automatically from --errors (ignores --v/--t)\n"
+                   "  --fast 1     large n (e.g. GF(2^9)): zero codeword, no H/verify/nullspace,\n"
+                   "               B evaluated lazily, no independence check (assumes deg < n)\n"
+                   "  --errors E   number of injected errors (1..%d)\n"
+                   "  --list 0|1   print the error position/value table (first trial)\n"
+                   "  --locator N  print up to N locator functions (0 = none, first trial)\n"
+                   "Default: a=3 b=2 over GF(2^5), v=149, t=80\n"
+                   "Verified: a=b+1 -> (3,2) (5,4) (7,6). Other a>b (a odd, gcd=1, a+b<=%d) need --force 1\n"
+                   "Large n (c>=9): use --fast 1\n",
+                   argv[0], MAX_ERRORS, MAX_M);
+            return 0;
+        } else { fprintf(stderr,"Unknown option: %s\n",argv[i]); return 2; }
+        if (i+1>=argc || !parse_int(argv[++i],dst)) {
+            fprintf(stderr,"Bad option value for %s\n",argv[i-1]); return 2;
+        }
+    }
+    if (a<3 || b<2 || a<=b || a+b>MAX_M || !(a&1) || gcd(a,b)!=1 ||
+        v<0 || t<0 || errors<1 || trials<1) {
+        fprintf(stderr,"Require a>b>=2, a+b<=%d, gcd(a,b)=1, a odd, and nonnegative v,t.\n",MAX_M);
+        return 2;
+    }
+    if (errors>MAX_ERRORS) {
+        fprintf(stderr,"--errors must be at most %d.\n",MAX_ERRORS);
+        return 2;
+    }
+    if (a!=b+1 && !force) {
+        fprintf(stderr,"a=%d, b=%d: the basis formulas are only valid for a=b+1 (checked: (5,2) fails the\n"
+                       "A*B subset H test). Use --force 1 to run anyway; results are not meaningful.\n",a,b);
+        return 2;
+    }
+    BB_A=a; BB_B=b; BB_C=a+b;
+    if (!gf_init(BB_C)) { fprintf(stderr,"GF(2^%d) initialization failed.\n",BB_C); return 2; }
+
+    /*
+     * 点の列挙: H(x,y) は y について F_2 線形 (Frobenius は加法的) なので、
+     * 各 x で L_x(e_i) を 13 個計算し、y を Gray code で全走査して L_x(y)=1 を探す。
+     */
+    size_t pcap=(size_t)1<<20, pn=0;
+    Point *pts=malloc(pcap*sizeof(*pts));
+    if (!pts) { fprintf(stderr,"Point allocation failed.\n"); return 1; }
+    {
+        static GF FROB[MAX_M][MAX_M]; /* FROB[e][i] = (2^i)^(2^e) */
+        for (int e=0;e<BB_C;++e) for (int i=0;i<BB_C;++i) FROB[e][i]=frob2((GF)(1u<<i),e);
+        GF T[MAX_M], invx[MAX_M];
+        for (int x=1; x<GQ; ++x) {
+            GF xx=(GF)x;
+            for (int k=0;k<BB_C;++k) invx[k]=ginv(frob2(xx,k));
+            for (int i=0;i<BB_C;++i) {
+                GF sum=0;
+                for (int k=0;k<BB_C;++k)
+                    sum^=gmul(FROB[(BB_A+k)%BB_C][i],invx[k]);
+                T[i]=sum;
+            }
+            GF y=0, val=0;
+            for (unsigned idx=1; idx<(unsigned)GQ; ++idx) {
+                int bit=__builtin_ctz(idx);
+                y^=(GF)(1u<<bit); val^=T[bit];
+                if (val==1) {
+                    if (pn==pcap) {
+                        pcap*=2;
+                        Point *np=realloc(pts,pcap*sizeof(*pts));
+                        if (!np) { fprintf(stderr,"Point allocation failed.\n"); return 1; }
+                        pts=np;
+                    }
+                    pts[pn++]=(Point){xx,y};
                 }
-            } else allsolved = 0;
-        }
-        if (allsolved) break;
-    }
-
-    if (1) {
-        for (int m = 0; m < NMETH; ++m) {
-            printf("[%s]\n", mname[m]);
-            if (!res[m].solved) { puts("  失敗/曖昧 (u,v を増やすか誤り数を減らす)"); continue; }
-            printf("  次数 d=%d, 交点(誤り位置候補) %d 個\n", res[m].deg, res[m].ncand);
-            if (m == 0) {
-                int zeros[MAXN], nz = 0;       // 曲線A上の有理点を数え直す 
-                for (int p = 0; p < npts; ++p) {
-                    int val = 0;
-                    for (int a = 0; a < curveNa; ++a)
-                        if (curveC[a])
-                            val ^= gf_mul(curveC[a], eval_mon(curveMon[a], pts[p]));
-                    if (!val) zeros[nz++] = p;
-                }
-                print_locator("  L", curveMon, curveC, curveNa, zeros, nz);
             }
-            print_error_positions(errv[m], received);
         }
     }
-    
-
-    if (1) {
-        for (int m = 0; m < NMETH; ++m) {
-            printf("[%s]\n", mname[m]);
-            if (!res[m].solved) { puts("  失敗/曖昧 (u,v を増やすか誤り数を減らす)"); continue; }
-            printf("  次数 d=%d, E2との有理交点(誤り位置候補) %d 個\n", res[m].deg, res[m].ncand);
-            if (m == 0) {
-                printf("  エラーロケーター曲線 L(x,y) = ");
-                print_poly(curveMon, curveC, curveNa);
-                puts("  = 0");
-            }
-            int w = 0;
-            for (int p = 0; p < npts; ++p) if (errv[m][p]) {
-                printf("  error at (%d,%d), value=%d\n", pts[p].x, pts[p].y, errv[m][p]);
-                w++;
-            }
-            printf("  推定誤り数=%d, 真の誤りと%s\n", w, res[m].correct ? "一致" : "不一致");
+    int n=(int)pn;
+    /* 走査結果の確認: 定義式 bbgs_define_equation で一部の点を再検証 */
+    for (int p=0; p<n; p+=(n/64>0?n/64:1))
+        if (bbgs_define_equation(pts[p].x,pts[p].y)!=1) {
+            fprintf(stderr,"Point enumeration inconsistent with the defining equation.\n");
+            return 1;
         }
-    }
-        
-}
 
-static void usage(const char *p) {
-    printf("Usage: %s [--m 1|2] [--u N] [--v N] [--errors T] [--seed N] [--trials N]\n", p);
-    puts("GF(2^(2m+1)): m=1 gives GF(8), m=2 gives GF(32).");
-    puts("u: locator curve max degree, v: row-monomial degree (u+v <= 8).");
-}
-
-int main(int argc, char **argv) {
-    int m = 2, u = 4, v = 4, errors = 3, seed = 1, trials = 1;
-    for (int i = 1; i < argc; i++) {
-        if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h")) { usage(argv[0]); return 0; }
-        if (i + 1 >= argc) { fprintf(stderr, "missing value for %s\n", argv[i]); return 2; }
-        char *name = argv[i]; int z = atoi(argv[++i]);
-        if (!strcmp(name, "--m")) m = z;
-        else if (!strcmp(name, "--u")) u = z;
-        else if (!strcmp(name, "--v")) v = z;
-        else if (!strcmp(name, "--errors")) errors = z;
-        else if (!strcmp(name, "--seed")) seed = z;
-        else if (!strcmp(name, "--trials")) trials = z;
-        else { fprintf(stderr, "unknown option %s\n", name); return 2; }
-    }
-    if (!init_field(m) || u < 0 || v < 0 || u + v > 8 || errors < 0 || errors > MAXN ||
-        trials < 1 || trials > 10000) {
-        fprintf(stderr, "unsupported parameters\n"); return 2;
-    }
-    enumerate_points();
-    rng = (unsigned)seed + 1;
-    if (!setup_code(u, v)) { fprintf(stderr, "code too large\n"); return 2; }
-    printf("BBGS E2 decoder with error-locator curves\nGF(2^%d), q=%d, j=%d, k=%d\n", 2 * m + 1, Q, J, K);
-    printf("Affine rational support: n=%d (x != 0)\n", npts);
-    printf("Locator degree <= %d, row degree v=%d; check monomials degree <= %d (%d rows)\n", u, v, u + v, nh);
-    if (errors == 0) { puts("No-error case: zero error vector is already a codeword."); return 0; }
-    if (errors > npts) { fprintf(stderr, "errors must be <= n\n"); return 2; }
-
-    int succ[NMETH] = {0}, solved[NMETH] = {0};
-    long degsum[NMETH] = {0};
-    for (int trial = 1; trial <= trials; trial++) {
-        int received[MAXN] = {0}, used[MAXN] = {0};
-        for (int i = 0; i < errors; i++) {
-            int pos; do { pos = rnd() % npts; } while (used[pos]); used[pos] = 1;
-            int e = 1 + (rnd() % (Q - 1)); received[pos] = e;
-            if (trials == 1) printf("error[%d]: point=(%d,%d), value=%d\n", i + 1, pts[pos].x, pts[pos].y, e);
+    int64_t qc=(int64_t)1<<BB_C;
+    int64_t genus=((qc-2)*(((int64_t)1<<(a-1))+((int64_t)1<<(b-1))-2)+(qc-2))/2;
+    printf("BBGS binary curve: q=2, a=%d, b=%d, c=%d over GF(2^%d)\n",a,b,a+b,a+b);
+    printf("Defining equation: sum[k=0..%d] y^(2^(a+k))/x^(2^k) = 1\n",BB_C-1);
+    printf("Affine candidate points n=%d; genus formula g=%lld\n",n,(long long)genus);
+    if (!n) { fprintf(stderr,"No affine rational points.\n"); free(pts); return 1; }
+    if (a!=b+1)
+        printf("WARNING: a!=b+1: formulas not valid here; the code/decoder below is NOT a correct BBGS code.\n");
+    if (autop) {
+        /* t: 2^(b-1)*t - 2g + 1 >= errors,  v: l(A) = #{i in [-v,0] admissible} >= errors+1 */
+        int64_t d=(int64_t)1<<(b-1);
+        int64_t tt=(2*genus-1+errors+d-1)/d;
+        int64_t cntA=0, vv=0, j0, k0;
+        for (vv=0; vv<=(int64_t)64*genus+100000; ++vv) {
+            if (bb_cand_ok(-vv,0,0,0,&j0,&k0)) ++cntA;
+            if (cntA>=errors+1) break;
         }
-        decode_all(received, u, v, trials == 1);
-        for (int k = 0; k < NMETH; ++k) {
-            solved[k] += res[k].solved;
-            succ[k] += res[k].correct;
-            if (res[k].solved) degsum[k] += res[k].deg;
+        t=(int)tt; v=(int)vv;
+        printf("auto: v=%d, t=%d (for %d errors)\n",v,t,errors);
+    }
+    if (!fast && n>20000) printf("Note: n=%d is large; --fast 1 is recommended.\n",n);
+
+    /* 補助関数 z,w の値を全点で一度だけ計算 */
+    PZ=calloc((size_t)n+1,sizeof(GF)); PW=calloc((size_t)n+1,sizeof(GF));
+    {
+        /* u=0 の点では w が定義できない (除数の台に当たる点) ので評価点から除く */
+        int m=0;
+        for (int p=0;p<n;p++) {
+            GF z,w;
+            if (!bb_point_data_nc(pts[p].x,pts[p].y,&z,&w)) continue;
+            pts[m]=pts[p]; PZ[m]=z; PW[m]=w; ++m;
         }
+        if (m<n) printf("Excluded %d points where the auxiliary function w is undefined (u=0); n=%d\n",n-m,m);
+        n=m;
+        if (!n) { fprintf(stderr,"No usable evaluation points.\n"); free(pts); return 1; }
     }
-    if (trials > 1) {
-        printf("Trials: %d, errors per trial: %d\n", trials, errors);
-        for (int k = 0; k < NMETH; ++k)
-            printf("  %s : 正しく復号 %d/%d (検査通過 %d, 平均次数 %.2f)\n", mname[k], succ[k], trials,
-                   solved[k], solved[k] ? (double)degsum[k] / solved[k] : 0.0);
+
+    PTS=pts;
+    Code code; code.n=n;
+    int cdim=0;
+    GF *ker=NULL;
+    if (fast) {
+        code.A=bb_build_basis(v,0,0,0,pts,n,1,0);
+        code.B=bb_build_basis(0,0,t,0,pts,n,0,0);
+        code.H=(Basis){0,NULL,NULL,NULL,NULL};
+        if (!code.A.cnt || !code.B.cnt) {
+            fprintf(stderr,"A required Omega/RR basis is empty; adjust --v/--t.\n");
+            free(pts); return 1;
+        }
+        printf("fast mode: zero codeword, H/verification skipped, B evaluated lazily.\n");
+    } else {
+        code.A=bb_build_basis(v,0,0,0,pts,n,1,1);
+        code.B=bb_build_basis(0,0,t,0,pts,n,1,1);
+        code.H=bb_build_basis(v,0,t,0,pts,n,1,1);
+        if (!code.A.cnt || !code.B.cnt || !code.H.cnt) {
+            fprintf(stderr,"A required Omega/RR basis is empty; adjust --v/--t.\n");
+            free(pts); return 1;
+        }
+        if (!bb_verify_product_basis(&code.A,&code.B,&code.H,n)) {
+            fprintf(stderr,"A*B subset H verification failed.\n");
+            free(pts); return 1;
+        }
+        printf("A*B subset H: verified (%d x %d basis products).\n",code.A.cnt,code.B.cnt);
+        ker=nullspace(code.H.v,code.H.cnt,n,&cdim);
+        if (!ker || cdim<=0) { fprintf(stderr,"Code dimension is zero or nullspace allocation failed.\n"); free(pts); return 1; }
     }
-    return (trials == 1 && succ[0] == 0 && succ[1] == 0 && succ[2] == 0) ? 1 : 0;
+    int64_t degB=(int64_t)t*((int64_t)1<<(b-1));
+    int guarantee=degB>2*genus-2 ? (int)(degB-2*genus+1) : 0;
+    if (code.A.cnt-1<guarantee) guarantee=code.A.cnt-1;
+    if (fast) printf("Dimensions: l(A)=%d, l(B)=%d (fast mode)\n",code.A.cnt,code.B.cnt);
+    else printf("Dimensions: l(A)=%d, l(B)=%d, l(A+B)=%d; dim(C)=%d\n",
+           code.A.cnt,code.B.cnt,code.H.cnt,cdim);
+    printf("ECP bound estimate: errors <= %d (under divisor/basis hypotheses).\n",guarantee);
+    if (errors>n) { fprintf(stderr,"--errors exceeds n.\n"); free(ker); free(pts); return 2; }
+    if (errors>guarantee)
+        printf("Warning: requested errors (%d) exceed the estimate; decoding may fail.\n",errors);
+
+    rng_state=(uint64_t)(unsigned)seed*0x2545F4914F6CDD1DULL+12345;
+    GF *cw=calloc((size_t)n,sizeof(GF)), *rcv=malloc((size_t)n*sizeof(GF));
+    GF *err=calloc((size_t)n,sizeof(GF)), *dec=malloc((size_t)n*sizeof(GF));
+    int *idx=malloc((size_t)n*sizeof(int));
+    if (!cw||!rcv||!err||!dec||!idx) { fprintf(stderr,"Trial allocation failed.\n"); return 1; }
+    int succ=0,fail=0,miscor=0;
+    for (int tr=0; tr<trials; ++tr) {
+        memset(cw,0,(size_t)n*sizeof(GF));
+        for (int k=0;k<cdim;k++) {
+            GF co=(GF)(rnd()%(uint64_t)GQ);
+            for (int p=0;p<n;p++) cw[p]^=gmul(co,ker[(size_t)k*n+p]);
+        }
+        memset(err,0,(size_t)n*sizeof(GF));
+        for (int p=0;p<n;p++) idx[p]=p;
+        for (int e=0;e<errors;e++) {
+            int j=e+(int)(rnd()%(uint64_t)(n-e));
+            int z=idx[e]; idx[e]=idx[j]; idx[j]=z;
+            err[idx[e]]=(GF)(1+rnd()%(uint64_t)(GQ-1));
+        }
+        for (int p=0;p<n;p++) rcv[p]=cw[p]^err[p];
+        Report rep={0,NULL,0,NULL};
+        int ne=0, ok=decode(&code,rcv,dec,&ne,&rep), same=ok&&!memcmp(cw,dec,(size_t)n*sizeof(GF));
+        if (same) succ++; else if (ok) miscor++; else fail++;
+        if (trials==1) printf("Decode: %s (injected=%d, recovered=%d)\n",
+                              same?"PASS":ok?"MISCORRECTION":"FAIL",errors,ne);
+        if (tr==0 && (list || locator>0)) {
+            if (trials>1) printf("--- details of trial 1: %s (injected=%d, recovered=%d) ---\n",
+                                 same?"PASS":ok?"MISCORRECTION":"FAIL",errors,ne);
+            int *ep=malloc(sizeof(int)*(size_t)(n+1)), nep=0;
+            for (int p=0;p<n;p++) if (ok && (rcv[p]^dec[p])) ep[nep++]=p;
+            if (locator>0) show_locator(&code,&rep,ep,nep,locator);
+            if (list) show_errors(&code,pts,rcv,dec,err,ok);
+            free(ep);
+        }
+        free(rep.ker); free(rep.Z);
+    }
+    if (trials>1) printf("%d trials: success=%d, miscorrection=%d, failure=%d\n",trials,succ,miscor,fail);
+
+    free(cw); free(rcv); free(err); free(dec); free(idx); free(ker); free(pts); free(PZ); free(PW);
+    free(code.A.v); free(code.B.v); free(code.H.v);
+    free(code.A.ei); free(code.A.ej); free(code.A.ek);
+    free(code.B.ei); free(code.B.ej); free(code.B.ek);
+    free(code.H.ei); free(code.H.ej); free(code.H.ek);
+    return fail||miscor ? 1 : 0;
 }

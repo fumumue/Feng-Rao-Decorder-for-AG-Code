@@ -1,4 +1,3 @@
-
 /*
  * BBGS one-point/ECP decoder - single-file configurable prototype (extended)
  *
@@ -677,3 +676,4 @@ int main(int argc, char **argv)
     free(code.H.ei); free(code.H.ej); free(code.H.ek);
     return fail||miscor ? 1 : 0;
 }
+
