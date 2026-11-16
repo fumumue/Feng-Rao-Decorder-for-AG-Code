@@ -43,7 +43,7 @@
 #define M 7
 #define Q 128
 //#define PRIMITIVE_POLY 0x89
-
+#define N Q
 typedef uint8_t GF;
 
 typedef struct
@@ -459,6 +459,93 @@ typedef struct {
     int *ey;
 } EvalBasis;
 
+
+static int g_xmax = 1 << 20;   /* x の指数の上限。既定は制限なし */
+
+static int build_monomial_basis(int degree, EvalBasis *out)
+{
+    int xm = g_xmax < degree ? g_xmax : degree;
+
+    int cap = 0;
+    for (int i = 0; i <= xm; ++i)
+        cap += degree - i + 1;
+
+    if (cap > MAX_MONOMIALS)
+        return 0;
+
+    memset(out, 0, sizeof(*out));
+
+    out->v  = calloc((size_t)cap * nD, 1);
+    out->ex = malloc((size_t)cap * sizeof(int));
+    out->ey = malloc((size_t)cap * sizeof(int));
+
+    GF *xp = malloc((size_t)(xm + 1) * nD);
+    GF *yp = malloc((size_t)(degree + 1) * nD);
+
+    if (!out->v || !out->ex || !out->ey || !xp || !yp) {
+        free(out->v); free(out->ex); free(out->ey);
+        free(xp); free(yp);
+        memset(out, 0, sizeof(*out));
+        return 0;
+    }
+
+    /* x^i, y^j の表(点ごと) */
+    for (int p = 0; p < nD; ++p) {
+        xp[p] = 1;
+        yp[p] = 1;
+    }
+    for (int i = 1; i <= xm; ++i)
+        for (int p = 0; p < nD; ++p)
+            xp[(size_t)i * nD + p] =
+                gf_mul(xp[(size_t)(i - 1) * nD + p], D[p].x);
+    for (int j = 1; j <= degree; ++j)
+        for (int p = 0; p < nD; ++p)
+            yp[(size_t)j * nD + p] =
+                gf_mul(yp[(size_t)(j - 1) * nD + p], D[p].y);
+
+    /* 全次数 d ごとに (d,0), (d-1,1), ... の順。x の指数が上限を超えるものは飛ばす */
+    int count = 0;
+    for (int d = 0; d <= degree; ++d) {
+        for (int k = 0; k <= d; ++k) {
+            int i = d - k;
+            int j = k;
+
+            if (i > xm)
+                continue;
+
+            GF *row = out->v + (size_t)count * nD;
+
+            for (int p = 0; p < nD; ++p)
+                row[p] = gf_mul(xp[(size_t)i * nD + p],
+                                yp[(size_t)j * nD + p]);
+
+            out->ex[count] = i;
+            out->ey[count] = j;
+            ++count;
+        }
+    }
+    out->count = count;
+
+    free(xp);
+    free(yp);
+
+#ifdef CHECK_INDEP
+    /* 確認用: 評価ベクトルが独立かを調べる(コンパイル時に -DCHECK_INDEP) */
+    {
+        RowSpace rs;
+        if (rs_init(&rs, count, nD)) {
+            for (int k = 0; k < count; ++k)
+                if (rs_add(&rs, out->v + (size_t)k * nD) == 0)
+                    fprintf(stderr, "dependent: x^%d y^%d\n",
+                            out->ex[k], out->ey[k]);
+            rs_free(&rs);
+        }
+    }
+#endif
+
+    return 1;
+}
+
 /*
  * Build an independent evaluation basis from monomials x^i y^j
  * with total degree <= degree.
@@ -466,7 +553,7 @@ typedef struct {
  * This is an evaluation-space basis, not yet a proven
  * Riemann-Roch basis ordered by pole order.
  */
-static int build_monomial_basis(int degree, EvalBasis *out)
+static int build_monomial_basis2(int degree, EvalBasis *out)
 {
     int cap = (degree + 1) * (degree + 2) / 2;
 
@@ -973,6 +1060,98 @@ static int decode(
     return good;
 }
 
+mterm
+obase (int a, int b)
+{
+  int i, j, k;
+  mterm c = { 0 };
+
+  c.n[0] = a;
+  c.n[1] = b;
+
+
+  return c;
+}
+
+
+
+
+int
+mkbase (mterm * aa)
+{
+  int i, j, k, l, count;
+  int d[256][2] = { 0 };
+  int bb[256][2] = { 0 };
+
+
+  count = 1;
+
+  for (i = 0; i < 20; i++)
+    {
+      k = 0;
+      j = i;
+      while ((d[i][0] + d[i][1]) < i && i < 5)
+	{
+	  d[k][1] = k;
+	  d[k][0] = j - k;
+	  printf ("k1=%d %d\n", j - k, k);
+	  k++;
+
+	}
+      for (l = 0; l < k; l++)
+	{
+	  bb[count][0] = d[l][0];
+	  bb[count++][1] = d[l][1];
+	  //    printf("a%d %d\n",d[l][0],d[l][1]);
+	}
+
+      if (i > 4)
+	{
+	  l = i - 4;
+	  j = 4;
+	  while (d[i][0] + d[i][1] < i && l < N - 1)
+	    {
+	      d[k][0] = j;
+	      d[k][1] = l;
+	      k++;
+	      j--;
+	      l++;
+	      printf ("k2=%d", k);
+	      if (j < 0)
+		break;
+	    }
+	  for (l = 0; l < k; l++)
+	    {
+	      bb[count][0] = d[l][0];
+	      bb[count++][1] = d[l][1];
+	      //    printf("a%d %d\n",d[l][0],d[l][1]);
+	    }
+	}
+
+
+    }
+
+  for (i = 0; i < 15 * 15; i++)
+    printf ("d=%d %d\n", bb[i][0], bb[i][1]);
+  // exit(1);
+
+
+  for (i = 0; i < 15 * 15; i++)
+    {
+      printf ("%d %d\n", bb[i][0], bb[i][1]);
+      //for(j=0;j<N-1;j++){
+      //  if(bb[i][0]+bb[i][1]<10){
+      aa[i] = obase (bb[i][0], bb[i][1]);
+      aa[i].a = 1;
+      //      }
+      // }
+    }
+  // exit(1);
+
+  return count;
+}
+
+
 /* ============================================================
  * Random generator and command-line interface
  * ============================================================ */
@@ -1055,8 +1234,8 @@ static void compute_syndrome(
 
 int main(int argc, char **argv)
 {
-    int da = 2;
-    int db = 2;
+    int da = 0;
+    int db = 0;
     int errors = 1;
     int trials = 1;
     int seed = 1;
@@ -1086,7 +1265,9 @@ int main(int argc, char **argv)
             fprintf(stderr, "Unknown option: %s\n", argv[i]);
             return 2;
         }
-
+        
+        int xmaxopt = 1 << 20;
+         if (!strcmp(argv[i], "--xmax")) dst = &xmaxopt;
         if (i + 1 >= argc ||
             !parse_int(argv[++i], dst)) {
             fprintf(stderr, "Invalid option value\n");
