@@ -353,8 +353,8 @@ static const CurveDef *curve;
 static int g_verbose = 0;
 static int g_full = 0;
 static int g_show_poly = 0;
-
-
+static int g_slow_syn = 0;
+static int g_zero_cw = 0;
 
 static const CurveDef *find_curve(const char *name)
 {
@@ -1202,7 +1202,7 @@ static int in_code(const EvalBasis *H, const GF *word)
  * Syndrome
  * ============================================================ */
 
-static void compute_syndrome(
+static void compute_syndrome_slow(
     const EvalBasis *A,
     const EvalBasis *B,
     const GF *received,
@@ -1232,6 +1232,127 @@ static void compute_syndrome(
         }
     }
 }
+ /*
+ * モーメント方式のシンドローム計算。
+ * A_i = x^ex_i y^ey_i, B_j = x^fx_j y^fy_j (単項式) なので
+ *   S[i][j] = m[ex_i+fx_j][ey_i+fy_j],
+ *   m[u][v] = sum_p r_p x_p^u y_p^v
+ * 異なる (u,v) だけ計算すればよい。
+ */
+static void compute_syndrome(
+    const EvalBasis *A,
+    const EvalBasis *B,
+    const GF *received,
+    GF *S,
+    GF *tmp)
+{
+    if (g_slow_syn) {
+        compute_syndrome_slow(A, B, received, S, tmp);
+        return;
+    }
+
+    int k1 = A->count;
+    int k2 = B->count;
+
+    int maxu = 0, maxv = 0;
+
+    for (int i = 0; i < k1; ++i) {
+        if (A->ex[i] > maxu) maxu = A->ex[i];
+        if (A->ey[i] > maxv) maxv = A->ey[i];
+    }
+
+    int bu = 0, bv = 0;
+
+    for (int j = 0; j < k2; ++j) {
+        if (B->ex[j] > bu) bu = B->ex[j];
+        if (B->ey[j] > bv) bv = B->ey[j];
+    }
+
+    maxu += bu;
+    maxv += bv;
+
+    size_t NU = (size_t)maxu + 1;
+    size_t NV = (size_t)maxv + 1;
+
+    GF *xp = malloc(NU * nD);
+    GF *yp = malloc(NV * nD);
+    uint8_t *need = calloc(NU * NV, 1);
+    GF *mom = calloc(NU * NV, 1);
+
+    if (!xp || !yp || !need || !mom) {
+        free(xp);
+        free(yp);
+        free(need);
+        free(mom);
+        compute_syndrome_slow(A, B, received, S, tmp);
+        return;
+    }
+
+    /* x^u(p), y^v(p) の表 */
+
+    for (int p = 0; p < nD; ++p) {
+        xp[p] = 1;
+        yp[p] = 1;
+    }
+
+    for (size_t u = 1; u < NU; ++u)
+        for (int p = 0; p < nD; ++p)
+            xp[u * nD + p] =
+                gf_mul(xp[(u - 1) * nD + p], D[p].x);
+
+    for (size_t v = 1; v < NV; ++v)
+        for (int p = 0; p < nD; ++p)
+            yp[v * nD + p] =
+                gf_mul(yp[(v - 1) * nD + p], D[p].y);
+
+    /* 必要な (u,v) に印をつける */
+
+    for (int i = 0; i < k1; ++i)
+        for (int j = 0; j < k2; ++j)
+            need[(size_t)(A->ex[i] + B->ex[j]) * NV
+                 + (size_t)(A->ey[i] + B->ey[j])] = 1;
+
+    /* モーメントを計算 (tmp = r_p * y^v(p)) */
+
+    for (size_t v = 0; v < NV; ++v) {
+        int any = 0;
+
+        for (size_t u = 0; u < NU && !any; ++u)
+            any = need[u * NV + v];
+
+        if (!any)
+            continue;
+
+        for (int p = 0; p < nD; ++p)
+            tmp[p] = gf_mul(received[p], yp[v * nD + p]);
+
+        for (size_t u = 0; u < NU; ++u) {
+            if (!need[u * NV + v])
+                continue;
+
+            GF s = 0;
+
+            for (int p = 0; p < nD; ++p)
+                s ^= gf_mul(xp[u * nD + p], tmp[p]);
+
+            mom[u * NV + v] = s;
+        }
+    }
+
+    /* S を並べる */
+
+    for (int i = 0; i < k1; ++i)
+        for (int j = 0; j < k2; ++j)
+            S[(size_t)i * k2 + j] =
+                mom[(size_t)(A->ex[i] + B->ex[j]) * NV
+                    + (size_t)(A->ey[i] + B->ey[j])];
+
+    free(xp);
+    free(yp);
+    free(need);
+    free(mom);
+}
+ 
 
 /* ============================================================
  * Solve Mx=b
@@ -1851,6 +1972,15 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--full")) {
             g_full = 1;
             continue;
+        } 
+        else if (!strcmp(argv[i], "--zero-cw")) {
+            g_zero_cw = 1;
+            continue;
+        }
+
+        else if (!strcmp(argv[i], "--slow-syndrome")) {
+            g_slow_syn = 1;
+            continue;
         }
         else if (!strcmp(argv[i], "--poly")) {
             g_show_poly = 1;
@@ -1899,6 +2029,7 @@ int main(int argc, char **argv)
                 "  --auto [--margin N]\n"
                 "  --full\n"
                 "  --poly\n"
+                "  --slow-syndrome\n"
                 "  --verbose\n\n"
                 "Curves:",
                 argv[0], argv[0]);
@@ -2257,11 +2388,13 @@ int main(int argc, char **argv)
      * -------------------------------------------------------- */
 
     t0 = now();
-
+    if (!g_zero_cw) {
+        /* 既存の codegen_init とその失敗処理、[time] codegen の表示 */
     if (!codegen_init(&cg, &H)) {
         fprintf(stderr,
                 "Code generator allocation failed\n");
-
+        }
+        
         free(cw);
         free(received);
         free(decoded);
@@ -2344,9 +2477,9 @@ int main(int argc, char **argv)
             received[order[e]] ^= value;
             injected[order[e]] ^= value;
         }
-
-        compute_syndrome(
-            &A, &B, received, S, tmp);
+        double ts = now();
+        compute_syndrome(&A, &B, received, S, tmp);
+        fprintf(stderr, "[time] syndrome: %.3fs\n", now() - ts);
 
         double t1 = now();
 
