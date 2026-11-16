@@ -36,12 +36,24 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define Q 64
-#define FIELD_POLY 0x43u
-#define NTERMS 7
+#define FIELD_POLY 0x89
+#define NTERMS 8
 #define MAX_MONOMIALS 512
 
+#define M 7
+#define Q 128
+//#define PRIMITIVE_POLY 0x89
+
 typedef uint8_t GF;
+
+typedef struct
+{
+
+  unsigned short n[3];
+  unsigned short a;
+
+} mterm;
+
 
 /*
  * Explicit curve definition.
@@ -58,6 +70,91 @@ static const unsigned short BBGS_EQUATION[NTERMS][4] = {
     { 0,  4, 0, 1},
     {32,  0, 0, 1}
 };
+  //gf256 g=1 elliptic
+  unsigned short el[4][4] =
+    { {0, 2, 1, 1}, {1, 1, 1, 1}, {3, 0, 0, 1}, {0, 0, 3, 1} };
+  //gf256 g=1 elloptic
+  unsigned short el2[5][4] =
+    { {0, 2, 1, 1}, {1, 1, 1, 1}, {3, 0, 0, 1}, {0, 0, 3, 1}, {2, 0, 1, 1} };
+  //gf8 g=6 Generalized Hermitian
+  unsigned short sc[4][4] =
+    { {3, 2, 0, 1}, {2, 4, 0, 1}, {0, 1, 0, 1}, {4, 0, 0, 1} };
+  //gf8 g=3 klein
+  unsigned short kl[3][4] = { {3, 1, 0, 1}, {0, 3, 0, 1}, {1, 0, 0, 1} };
+  //gfQ*Q Hermitian
+  unsigned short he[3][4] = { {Q + 1, 0, 0, 1}, {0, Q, 0, 1}, {0, 1, 0, 1} };
+  //gf16 g=21 #N=121 Generalized Hermitian
+  unsigned short gu[5][4] =
+    { {7, 4, 0, 1}, {6, 8, 0, 1}, {4, 1, 0, 1}, {0, 2, 0, 1}, {8, 0, 0, 1} };
+  //gf32 g=75 #N=497 Generalized Hermitian
+  unsigned short ge[6][4] =
+    { {15, 8, 0, 1}, {14, 16, 0, 1}, {12, 1, 0, 1}, {8, 2, 0, 1}, {0, 4, 0,
+								   1}, {16, 0,
+									0,
+									1} };
+  //gf64 g=212 #N=2017 Generalized Hermitian
+  unsigned short gg[7][4] =
+    { {31, 8, 0, 1}, {30, 16, 0, 1}, {28, 32, 0, 1}, {24, 1, 0, 1}, {16, 2, 0,
+								     1}, {0,
+									  4,
+									  0,
+									  1},
+    {32, 0, 0, 1} };
+  //gf256 g=2413 Generalized Hermitian
+  unsigned short gd[9][4] =
+    { {127, 8, 0, 1}, {126, 16, 0, 1}, {124, 32, 0, 1}, {120, 64, 0, 1}, {112,
+									  128,
+									  0,
+									  1},
+    {96, 1, 0, 1}, {64, 2, 0, 1}, {0, 4, 0, 1}, {128, 0, 0, 1} };
+  //gf128 g=315 Generalized Hermitian
+  unsigned short cc[8][4] =
+    { {63, 8, 0, 1}, {62, 16, 0, 1}, {60, 32, 0, 1}, {56, 64, 0, 1}, {48, 1,
+								      0, 1},
+    {32, 2, 0, 1}, {0, 4, 0, 1}, {64, 0, 0, 1} };
+  //gf256 y^(Q+1)=X^8+x^4+x^2+x kummer
+  unsigned short ku[5][4] =
+    { {0, 17, 0, 1}, {8, 0, 0, 1}, {4, 0, 0, 1}, {2, 0, 0, 1}, {1, 0, 0, 1} };
+  //gf16 kummer
+  unsigned short ku3[5][4] =
+    { {0, 5, 0, 1}, {12, 0, 0, 1}, {9, 0, 0, 1}, {6, 0, 0, 1}, {3, 0, 0, 1} };
+  //gf64 kummer g=56
+  unsigned short ku4[5][4] =
+    { {0, 9, 0, 1}, {40, 0, 0, 1}, {33, 0, 0, 1}, {12, 0, 0, 1}, {5, 0, 0,
+								  1} };
+  unsigned short lo[3][4] = { {2, 0, 0, 1}, {1, 0, 0, 3}, {0, 1, 0, 6} };
+  unsigned short lk[6][4] =
+    { {0, 2, 0, 1}, {0, 1, 0, 3}, {0, 0, 1, 6}, {3, 1, 0, 1}, {0, 3, 1, 1},
+    {1, 0, 3, 1} };
+  //gf32 g=26 #N=157
+  unsigned short ts[3][4] = { {2, 2, 5, 1}, {7, 0, 2, 1}, {0, 9, 0, 1} };
+  //gf128 g=78 #N=891
+  unsigned short tt[3][4] = { {3, 1, 0, 1}, {13, 0, 0, 1}, {0, 14, 0, 1} };
+  //gf512 Generalized Hermitian
+  unsigned short gt[10][4] =
+    { {255, 16, 0, 1}, {254, 32, 0, 1}, {252, 64, 0, 1}, {248, 128, 0, 1},
+    {240, 256, 0, 1}, {224, 1, 0, 1}, {192, 2, 0, 1}, {128, 4, 0, 1}, {0, 8,
+								       0, 1},
+    {256, 0, 0, 1} };
+  //over gf128 suzuki #N=16384
+  unsigned short su[4][4] =
+    { {0, 128, 0, 1}, {0, 1, 0, 1}, {136, 0, 0, 1}, {9, 0, 0, 1} };
+  //gf32 suzuki #N=1024
+  unsigned short s2[4][4] =
+    { {0, 32, 0, 1}, {0, 1, 0, 1}, {36, 0, 0, 1}, {5, 0, 0, 1} };
+  //gf8 suzuki 
+  unsigned short s3[4][4] =
+    { {0, 8, 0, 1}, {0, 1, 0, 1}, {10, 0, 0, 1}, {3, 0, 0, 1} };
+  //y9 = x4 + x2 + x gf64 kummer
+  unsigned short ku2[4][4] =
+    { {0, 9, 0, 1}, {4, 0, 0, 1}, {2, 0, 0, 1}, {1, 0, 0, 1} };
+  //y^9=x^2+x gf64 g=4
+  unsigned short ku5[3][4] = { {0, 9, 0, 1}, {2, 0, 0, 1}, {1, 0, 0, 1} };
+
+  unsigned int bb[256][2] = { 0 };	//{{0,0},{1,0},{0,1},{2,0},{1,1},{0,2},{3,0},{2,1},{1,2},{0,3},{4,0},{3,1},{2,2},{1,3},{0,4},{5,0},{4,1},{3,2},{2,3},{1,4},{6,0},{5,1},{4,2},{3,3},{2,4},{7,0},{6,1},{5,2},{4,3},{3,4}};
+  mterm aa[1256] = { 0 };
+  mterm oo = { 0 };
+  unsigned int d[256][2] = { 0 };
 
 /* ============================================================
  * GF(64)
@@ -79,7 +176,7 @@ static GF gf_mul_slow(GF a, GF b)
         bb >>= 1;
         aa <<= 1;
 
-        if (aa & Q)
+        if (aa & 0x80)
             aa ^= FIELD_POLY;
     }
 
@@ -156,8 +253,8 @@ static GF eval_curve(GF x, GF y)
 {
     GF f = 0;
 
-    for (int i = 0; i < NTERMS; ++i) {
-        const unsigned short *t = BBGS_EQUATION[i];
+    for (int i = 0; i < 8; ++i) {
+        const unsigned short *t = cc[i]; //BBGS_EQUATION[i];
 
         if (t[2] != 0) {
             fprintf(stderr,
@@ -182,6 +279,7 @@ static int enumerate_points(void)
 
     if (!D)
         return 0;
+
 
     nD = 0;
 
@@ -947,6 +1045,10 @@ static void compute_syndrome(
     }
 }
 
+
+
+
+
 /* ============================================================
  * Main
  * ============================================================ */
@@ -1012,6 +1114,7 @@ int main(int argc, char **argv)
         fprintf(stderr, "Point enumeration failed\n");
         return 1;
     }
+//exit(1);
 
     printf("Curve: seven-term BBGS input over GF(64)\n");
 
@@ -1022,6 +1125,8 @@ int main(int argc, char **argv)
     );
 
     printf("Affine rational points: %d\n", nD);
+    //exit(1);
+
 
     EvalBasis A = {0};
     EvalBasis B = {0};
@@ -1227,6 +1332,7 @@ for (int i = 0; i < nD; ++i) {
     free(received);
     free(decoded);
     free(order);
+    free(error_vec);
 
     free_basis(&A);
     free_basis(&B);
