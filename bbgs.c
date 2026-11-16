@@ -1,197 +1,513 @@
-
 /*
- * BBGS seven-term curve: evaluation-code / ECP decoder
+ * BBGS / 一般化エルミート曲線
+ * 評価符号と ECP 型復号器
  *
- * Field:
- *   GF(64) = GF(2)[T] / (T^6 + T + 1)
- *   primitive polynomial = 0x43
- *
- * Curve terms:
- *   {x exponent, y exponent, z exponent, coefficient}
- *
- * The supplied seven terms have z exponent 0.
- * Therefore the affine equation is F(x,y)=0.
- *
- * Code construction:
- *   A = span of independent evaluations of x^i y^j, i+j <= da
- *   B = span of independent evaluations of x^i y^j, i+j <= db
- *   H = span of coordinatewise products A_i * B_j
- *   C = H^perp
- *
- * Decoder:
- *   S_ij = sum_P r(P) A_i(P) B_j(P)
- *   Compute the right kernel of S^T.
- *   Find common zeros of kernel functions on evaluation points.
- *   Solve for error values and verify the corrected word.
+ * GF(2^m), m <= 8
  *
  * Build:
- *   cc -O2 -std=c11 -Wall -Wextra bbgs_ecp64.c -o bbgs_ecp64
+ *   cc -O2 -std=c11 -Wall -Wextra bbgs.c -o bbgs
  *
- * Run:
- *   ./bbgs_ecp64 --da 8 --db 8 --errors 30 --trials 100 --seed 7
+ * BBGS:
+ *   ./bbgs --bbgs q a b --da 2 --db 2 --errors 1
+ *
+ * Existing curves:
+ *   ./bbgs --curve cc --da 2 --db 2 --errors 1
+ *
+ * Options:
+ *   --bbgs q a b
+ *   --curve NAME
+ *   --m N
+ *   --da N
+ *   --db N
+ *   --errors N
+ *   --trials N
+ *   --seed N
+ *   --auto
+ *   --margin N
+ *   --full
+ *   --verbose
  */
 
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#include <limits.h>
+#include <errno.h>
 
-#define FIELD_POLY 0x89
-#define NTERMS 8
-#define MAX_MONOMIALS 512
+#define MAXQ 256
+#define MAX_MONOMIALS 8192
+#define BBGS_MAX_TERMS 256
 
-#define M 7
-#define Q 128
-//#define PRIMITIVE_POLY 0x89
-#define N Q
 typedef uint8_t GF;
 
-typedef struct
-{
-
-  unsigned short n[3];
-  unsigned short a;
-
-} mterm;
-
-
-/*
- * Explicit curve definition.
- *
- * Each row:
- *   {x degree, y degree, z degree, coefficient}
- */
-static const unsigned short BBGS_EQUATION[NTERMS][4] = {
-    {31,  8, 0, 1},
-    {30, 16, 0, 1},
-    {28, 32, 0, 1},
-    {24,  1, 0, 1},
-    {16,  2, 0, 1},
-    { 0,  4, 0, 1},
-    {32,  0, 0, 1}
-};
-  //gf256 g=1 elliptic
-  unsigned short el[4][4] =
-    { {0, 2, 1, 1}, {1, 1, 1, 1}, {3, 0, 0, 1}, {0, 0, 3, 1} };
-  //gf256 g=1 elloptic
-  unsigned short el2[5][4] =
-    { {0, 2, 1, 1}, {1, 1, 1, 1}, {3, 0, 0, 1}, {0, 0, 3, 1}, {2, 0, 1, 1} };
-  //gf8 g=6 Generalized Hermitian
-  unsigned short sc[4][4] =
-    { {3, 2, 0, 1}, {2, 4, 0, 1}, {0, 1, 0, 1}, {4, 0, 0, 1} };
-  //gf8 g=3 klein
-  unsigned short kl[3][4] = { {3, 1, 0, 1}, {0, 3, 0, 1}, {1, 0, 0, 1} };
-  //gfQ*Q Hermitian
-  unsigned short he[3][4] = { {Q + 1, 0, 0, 1}, {0, Q, 0, 1}, {0, 1, 0, 1} };
-  //gf16 g=21 #N=121 Generalized Hermitian
-  unsigned short gu[5][4] =
-    { {7, 4, 0, 1}, {6, 8, 0, 1}, {4, 1, 0, 1}, {0, 2, 0, 1}, {8, 0, 0, 1} };
-  //gf32 g=75 #N=497 Generalized Hermitian
-  unsigned short ge[6][4] =
-    { {15, 8, 0, 1}, {14, 16, 0, 1}, {12, 1, 0, 1}, {8, 2, 0, 1}, {0, 4, 0,
-								   1}, {16, 0,
-									0,
-									1} };
-  //gf64 g=212 #N=2017 Generalized Hermitian
-  unsigned short gg[7][4] =
-    { {31, 8, 0, 1}, {30, 16, 0, 1}, {28, 32, 0, 1}, {24, 1, 0, 1}, {16, 2, 0,
-								     1}, {0,
-									  4,
-									  0,
-									  1},
-    {32, 0, 0, 1} };
-  //gf256 g=2413 Generalized Hermitian
-  unsigned short gd[9][4] =
-    { {127, 8, 0, 1}, {126, 16, 0, 1}, {124, 32, 0, 1}, {120, 64, 0, 1}, {112,
-									  128,
-									  0,
-									  1},
-    {96, 1, 0, 1}, {64, 2, 0, 1}, {0, 4, 0, 1}, {128, 0, 0, 1} };
-  //gf128 g=315 Generalized Hermitian
-  unsigned short cc[8][4] =
-    { {63, 8, 0, 1}, {62, 16, 0, 1}, {60, 32, 0, 1}, {56, 64, 0, 1}, {48, 1,
-								      0, 1},
-    {32, 2, 0, 1}, {0, 4, 0, 1}, {64, 0, 0, 1} };
-  //gf256 y^(Q+1)=X^8+x^4+x^2+x kummer
-  unsigned short ku[5][4] =
-    { {0, 17, 0, 1}, {8, 0, 0, 1}, {4, 0, 0, 1}, {2, 0, 0, 1}, {1, 0, 0, 1} };
-  //gf16 kummer
-  unsigned short ku3[5][4] =
-    { {0, 5, 0, 1}, {12, 0, 0, 1}, {9, 0, 0, 1}, {6, 0, 0, 1}, {3, 0, 0, 1} };
-  //gf64 kummer g=56
-  unsigned short ku4[5][4] =
-    { {0, 9, 0, 1}, {40, 0, 0, 1}, {33, 0, 0, 1}, {12, 0, 0, 1}, {5, 0, 0,
-								  1} };
-  unsigned short lo[3][4] = { {2, 0, 0, 1}, {1, 0, 0, 3}, {0, 1, 0, 6} };
-  unsigned short lk[6][4] =
-    { {0, 2, 0, 1}, {0, 1, 0, 3}, {0, 0, 1, 6}, {3, 1, 0, 1}, {0, 3, 1, 1},
-    {1, 0, 3, 1} };
-  //gf32 g=26 #N=157
-  unsigned short ts[3][4] = { {2, 2, 5, 1}, {7, 0, 2, 1}, {0, 9, 0, 1} };
-  //gf128 g=78 #N=891
-  unsigned short tt[3][4] = { {3, 1, 0, 1}, {13, 0, 0, 1}, {0, 14, 0, 1} };
-  //gf512 Generalized Hermitian
-  unsigned short gt[10][4] =
-    { {255, 16, 0, 1}, {254, 32, 0, 1}, {252, 64, 0, 1}, {248, 128, 0, 1},
-    {240, 256, 0, 1}, {224, 1, 0, 1}, {192, 2, 0, 1}, {128, 4, 0, 1}, {0, 8,
-								       0, 1},
-    {256, 0, 0, 1} };
-  //over gf128 suzuki #N=16384
-  unsigned short su[4][4] =
-    { {0, 128, 0, 1}, {0, 1, 0, 1}, {136, 0, 0, 1}, {9, 0, 0, 1} };
-  //gf32 suzuki #N=1024
-  unsigned short s2[4][4] =
-    { {0, 32, 0, 1}, {0, 1, 0, 1}, {36, 0, 0, 1}, {5, 0, 0, 1} };
-  //gf8 suzuki 
-  unsigned short s3[4][4] =
-    { {0, 8, 0, 1}, {0, 1, 0, 1}, {10, 0, 0, 1}, {3, 0, 0, 1} };
-  //y9 = x4 + x2 + x gf64 kummer
-  unsigned short ku2[4][4] =
-    { {0, 9, 0, 1}, {4, 0, 0, 1}, {2, 0, 0, 1}, {1, 0, 0, 1} };
-  //y^9=x^2+x gf64 g=4
-  unsigned short ku5[3][4] = { {0, 9, 0, 1}, {2, 0, 0, 1}, {1, 0, 0, 1} };
-
-  unsigned int bb[256][2] = { 0 };	//{{0,0},{1,0},{0,1},{2,0},{1,1},{0,2},{3,0},{2,1},{1,2},{0,3},{4,0},{3,1},{2,2},{1,3},{0,4},{5,0},{4,1},{3,2},{2,3},{1,4},{6,0},{5,1},{4,2},{3,3},{2,4},{7,0},{6,1},{5,2},{4,3},{3,4}};
-  mterm aa[1256] = { 0 };
-  mterm oo = { 0 };
-  unsigned int d[256][2] = { 0 };
-
 /* ============================================================
- * GF(64)
+ * BBGS curve generator
  * ============================================================ */
 
-static GF expt[2 * (Q - 1)];
-static int logt[Q];
+#define BBGS_V 3
+
+typedef struct {
+    unsigned short n[BBGS_V];
+    unsigned short a;
+} mterm;
+
+typedef struct {
+    mterm x[BBGS_MAX_TERMS];
+} MP;
+
+static int pow_u64(uint64_t q, unsigned int n, uint64_t *r)
+{
+    uint64_t v = 1;
+
+    for (unsigned int i = 0; i < n; ++i) {
+        if (q && v > UINT64_MAX / q)
+            return 0;
+        v *= q;
+    }
+
+    *r = v;
+    return 1;
+}
+
+static int get_characteristic(unsigned int q, unsigned int *p)
+{
+    if (q < 2 || !p)
+        return 0;
+
+    unsigned int prime = 0;
+
+    for (unsigned int d = 2; d <= q / d; ++d) {
+        if (q % d == 0) {
+            prime = d;
+            break;
+        }
+    }
+
+    if (!prime)
+        prime = q;
+
+    unsigned int n = q;
+
+    while (n % prime == 0)
+        n /= prime;
+
+    if (n != 1)
+        return 0;
+
+    *p = prime;
+    return 1;
+}
+
+static unsigned int gcd_int(unsigned int a, unsigned int b)
+{
+    while (b) {
+        unsigned int r = a % b;
+        a = b;
+        b = r;
+    }
+
+    return a;
+}
+
+static int generate_bbgs_curve(
+    unsigned int q,
+    unsigned int a,
+    unsigned int b,
+    MP *curve_out)
+{
+    if (!curve_out || q < 2 || a == 0 || b == 0)
+        return 0;
+
+    if (a > UINT_MAX - b)
+        return 0;
+
+    unsigned int p;
+
+    if (!get_characteristic(q, &p))
+        return 0;
+
+    unsigned int c = a + b;
+
+    if (gcd_int(a, b) != 1)
+        return 0;
+
+    if (c >= BBGS_MAX_TERMS)
+        return 0;
+
+    uint64_t qpower;
+
+    if (!pow_u64(q, c - 1, &qpower))
+        return 0;
+
+    if (qpower > USHRT_MAX)
+        return 0;
+
+    memset(curve_out, 0, sizeof(*curve_out));
+
+    unsigned int t = 0;
+    uint64_t xq, yq;
+
+    /*
+     * 第1群:
+     *
+     * x^(Q-q^i) y^(q^(a+i))
+     *
+     * i = 0,...,b-1
+     */
+
+    for (unsigned int i = 0; i < b; ++i) {
+        if (!pow_u64(q, i, &xq) ||
+            !pow_u64(q, a + i, &yq))
+            return 0;
+
+        if (xq > qpower || yq > USHRT_MAX)
+            return 0;
+
+        curve_out->x[t].n[0] =
+            (unsigned short)(qpower - xq);
+        curve_out->x[t].n[1] = (unsigned short)yq;
+        curve_out->x[t].n[2] = 0;
+        curve_out->x[t].a = 1;
+
+        ++t;
+    }
+
+    /*
+     * 第2群:
+     *
+     * x^(Q-q^(b+i)) y^(q^i)
+     *
+     * i = 0,...,a-1
+     */
+
+    for (unsigned int i = 0; i < a; ++i) {
+        if (!pow_u64(q, b + i, &xq) ||
+            !pow_u64(q, i, &yq))
+            return 0;
+
+        if (xq > qpower || yq > USHRT_MAX)
+            return 0;
+
+        curve_out->x[t].n[0] =
+            (unsigned short)(qpower - xq);
+        curve_out->x[t].n[1] = (unsigned short)yq;
+        curve_out->x[t].n[2] = 0;
+        curve_out->x[t].a = 1;
+
+        ++t;
+    }
+
+    /*
+     * 最終項:
+     *
+     * -x^Q
+     */
+
+    curve_out->x[t].n[0] = (unsigned short)qpower;
+    curve_out->x[t].n[1] = 0;
+    curve_out->x[t].n[2] = 0;
+    curve_out->x[t].a = (unsigned short)(p - 1);
+
+    ++t;
+
+    return (int)t;
+}
+
+/* ============================================================
+ * Existing curve definitions
+ * ============================================================ */
+
+static const unsigned short sc[4][4] = {
+    {3,2,0,1}, {2,4,0,1}, {0,1,0,1}, {4,0,0,1}
+};
+
+static const unsigned short kl[3][4] = {
+    {3,1,0,1}, {0,3,0,1}, {1,0,0,1}
+};
+
+static const unsigned short s3[4][4] = {
+    {0,8,0,1}, {0,1,0,1}, {10,0,0,1}, {3,0,0,1}
+};
+
+static const unsigned short gu[5][4] = {
+    {7,4,0,1}, {6,8,0,1}, {4,1,0,1},
+    {0,2,0,1}, {8,0,0,1}
+};
+
+static const unsigned short ku3[5][4] = {
+    {0,5,0,1}, {12,0,0,1}, {9,0,0,1},
+    {6,0,0,1}, {3,0,0,1}
+};
+
+static const unsigned short ge[6][4] = {
+    {15,8,0,1}, {14,16,0,1}, {12,1,0,1},
+    {8,2,0,1}, {0,4,0,1}, {16,0,0,1}
+};
+
+static const unsigned short s2[4][4] = {
+    {0,32,0,1}, {0,1,0,1}, {36,0,0,1}, {5,0,0,1}
+};
+
+static const unsigned short ts[3][4] = {
+    {2,2,5,1}, {7,0,2,1}, {0,9,0,1}
+};
+
+static const unsigned short gg[7][4] = {
+    {31,8,0,1}, {30,16,0,1}, {28,32,0,1},
+    {24,1,0,1}, {16,2,0,1}, {0,4,0,1},
+    {32,0,0,1}
+};
+
+static const unsigned short ku2[4][4] = {
+    {0,9,0,1}, {4,0,0,1}, {2,0,0,1}, {1,0,0,1}
+};
+
+static const unsigned short ku4[5][4] = {
+    {0,9,0,1}, {40,0,0,1}, {33,0,0,1},
+    {12,0,0,1}, {5,0,0,1}
+};
+
+static const unsigned short ku5[3][4] = {
+    {0,9,0,1}, {2,0,0,1}, {1,0,0,1}
+};
+
+static const unsigned short cc[8][4] = {
+    {63,8,0,1}, {62,16,0,1}, {60,32,0,1},
+    {56,64,0,1}, {48,1,0,1}, {32,2,0,1},
+    {0,4,0,1}, {64,0,0,1}
+};
+
+static const unsigned short tt[3][4] = {
+    {3,1,0,1}, {13,0,0,1}, {0,14,0,1}
+};
+
+static const unsigned short su[4][4] = {
+    {0,128,0,1}, {0,1,0,1}, {136,0,0,1}, {9,0,0,1}
+};
+
+static const unsigned short gd[9][4] = {
+    {127,8,0,1}, {126,16,0,1}, {124,32,0,1},
+    {120,64,0,1}, {112,128,0,1}, {96,1,0,1},
+    {64,2,0,1}, {0,4,0,1}, {128,0,0,1}
+};
+
+static const unsigned short ku[5][4] = {
+    {0,17,0,1}, {8,0,0,1}, {4,0,0,1},
+    {2,0,0,1}, {1,0,0,1}
+};
+
+static const unsigned short el[4][4] = {
+    {0,2,1,1}, {1,1,1,1}, {3,0,0,1}, {0,0,3,1}
+};
+
+static const unsigned short el2[5][4] = {
+    {0,2,1,1}, {1,1,1,1}, {3,0,0,1},
+    {0,0,3,1}, {2,0,1,1}
+};
+
+static unsigned short he_buf[3][4];
+static unsigned short bbgs_buf[BBGS_MAX_TERMS][4];
+
+typedef struct {
+    const char *name;
+    int m;
+    unsigned poly;
+    int nterms;
+    const unsigned short (*t)[4];
+} CurveDef;
+
+#define NT(a) ((int)(sizeof(a) / sizeof((a)[0])))
+
+static const CurveDef CURVES[] = {
+    {"sc",3,0x0B,NT(sc),sc},
+    {"kl",3,0x0B,NT(kl),kl},
+    {"s3",3,0x0B,NT(s3),s3},
+    {"gu",4,0x13,NT(gu),gu},
+    {"ku3",4,0x13,NT(ku3),ku3},
+    {"ge",5,0x25,NT(ge),ge},
+    {"s2",5,0x25,NT(s2),s2},
+    {"ts",5,0x25,NT(ts),ts},
+    {"gg",6,0x43,NT(gg),gg},
+    {"ku2",6,0x43,NT(ku2),ku2},
+    {"ku4",6,0x43,NT(ku4),ku4},
+    {"ku5",6,0x43,NT(ku5),ku5},
+    {"cc",7,0x89,NT(cc),cc},
+    {"su",7,0x89,NT(su),su},
+    {"tt",7,0x89,NT(tt),tt},
+    {"gd",8,0x11D,NT(gd),gd},
+    {"ku",8,0x11D,NT(ku),ku},
+    {"el",8,0x11D,NT(el),el},
+    {"el2",8,0x11D,NT(el2),el2},
+    {"he",0,0,3,(const unsigned short (*)[4])he_buf}
+};
+
+#define NCURVES ((int)(sizeof(CURVES) / sizeof(CURVES[0])))
+
+static CurveDef cur_local;
+static const CurveDef *curve;
+
+static int g_verbose = 0;
+static int g_full = 0;
+
+static const CurveDef *find_curve(const char *name)
+{
+    for (int i = 0; i < NCURVES; ++i)
+        if (!strcmp(CURVES[i].name, name))
+            return &CURVES[i];
+
+    return NULL;
+}
+
+/*
+ * BBGS生成結果を CurveDef に接続する。
+ *
+ * q は基礎体の位数。
+ * Q = q^(a+b-1) が実際の有限体の位数。
+ *
+ * 現在の有限体演算は標数2なので q=2^r に限定。
+ * Q <= 256 に限定。
+ */
+
+static int make_bbgs_curve(
+    unsigned int q,
+    unsigned int a,
+    unsigned int b,
+    CurveDef *out)
+{
+    if (!out)
+        return 0;
+
+    if (q < 2 || (q & (q - 1)) != 0)
+        return 0;
+
+    unsigned int p;
+
+    if (!get_characteristic(q, &p) || p != 2)
+        return 0;
+
+    MP mp;
+
+    int n = generate_bbgs_curve(q, a, b, &mp);
+
+    if (n <= 0 || n > BBGS_MAX_TERMS)
+        return 0;
+
+    unsigned int c = a + b;
+    uint64_t qpower;
+
+    if (!pow_u64(q, c, &qpower))
+        return 0;
+
+    if (qpower > MAXQ)
+        return 0;
+
+    /*
+     * Q は2のべき乗でなければならない。
+     * m = log2(Q)
+     */
+
+    unsigned int v = (unsigned int)qpower;
+    int m = 0;
+
+    while (v > 1 && (v & 1u) == 0) {
+        v >>= 1;
+        ++m;
+    }
+
+    if (v != 1 || m < 1 || m > 8)
+        return 0;
+
+    static const unsigned poly_table[9] = {
+        0x00,
+        0x03,
+        0x07,
+        0x0B,
+        0x13,
+        0x25,
+        0x43,
+        0x89,
+        0x11D
+    };
+
+    for (int i = 0; i < n; ++i) {
+        bbgs_buf[i][0] = mp.x[i].n[0];
+        bbgs_buf[i][1] = mp.x[i].n[1];
+        bbgs_buf[i][2] = mp.x[i].n[2];
+        bbgs_buf[i][3] = mp.x[i].a;
+    }
+
+    out->name = "bbgs";
+    out->m = m;
+    out->poly = poly_table[m];
+    out->nterms = n;
+    out->t = bbgs_buf;
+
+    return 1;
+}
+
+static int curve_degree(void)
+{
+    int d = 0;
+
+    for (int i = 0; i < curve->nterms; ++i) {
+        int x = curve->t[i][0] + curve->t[i][1];
+        if (x > d)
+            d = x;
+    }
+
+    return d;
+}
+
+/* ============================================================
+ * GF(2^m)
+ * ============================================================ */
+
+static int gQ = 128;
+static unsigned gpoly = 0x89;
+
+#define Q gQ
+
+static GF expt[2 * (MAXQ - 1)];
+static int logt[MAXQ];
+static GF mt[MAXQ][MAXQ];
 
 static GF gf_mul_slow(GF a, GF b)
 {
-    unsigned aa = a;
-    unsigned bb = b;
+    unsigned x = a;
+    unsigned y = b;
     unsigned r = 0;
 
-    while (bb) {
-        if (bb & 1u)
-            r ^= aa;
+    while (y) {
+        if (y & 1u)
+            r ^= x;
 
-        bb >>= 1;
-        aa <<= 1;
+        y >>= 1;
+        x <<= 1;
 
-        if (aa & 0x80)
-            aa ^= FIELD_POLY;
+        if (x & (unsigned)Q)
+            x ^= gpoly;
     }
 
-    return (GF)(r & (Q - 1));
+    return (GF)(r & (unsigned)(Q - 1));
 }
 
-static int gf_init(void)
+static int gf_init(int m, unsigned poly)
 {
+    if (m < 1 || m > 8)
+        return 0;
+
+    gQ = 1 << m;
+    gpoly = poly;
+
     GF x = 1;
 
     for (int i = 0; i < Q; ++i)
         logt[i] = -1;
 
     for (int i = 0; i < Q - 1; ++i) {
-        if (x == 0 || logt[x] >= 0)
+        if (!x || logt[x] >= 0)
             return 0;
 
         expt[i] = x;
@@ -205,62 +521,58 @@ static int gf_init(void)
     for (int i = Q - 1; i < 2 * (Q - 1); ++i)
         expt[i] = expt[i - (Q - 1)];
 
+    for (int a = 0; a < Q; ++a) {
+        for (int b = 0; b < Q; ++b) {
+            mt[a][b] = (a && b)
+                ? expt[logt[a] + logt[b]]
+                : 0;
+        }
+    }
+
     return 1;
 }
 
 static inline GF gf_mul(GF a, GF b)
 {
-    if (!a || !b)
-        return 0;
-
-    return expt[logt[a] + logt[b]];
+    return mt[a][b];
 }
 
 static inline GF gf_inv(GF a)
 {
-    if (!a)
-        return 0;
-
-    return expt[(Q - 1) - logt[a]];
+    return a ? expt[(Q - 1) - logt[a]] : 0;
 }
 
 static GF gf_pow(GF a, unsigned n)
 {
-    if (n == 0)
+    if (!n)
         return 1;
 
     if (!a)
         return 0;
 
     return expt[
-        ((unsigned)logt[a] * (n % (Q - 1))) % (Q - 1)
+        ((unsigned)logt[a] * (n % (unsigned)(Q - 1)))
+        % (unsigned)(Q - 1)
     ];
 }
 
 /* ============================================================
- * Curve and affine rational points
+ * Curve points
  * ============================================================ */
 
 typedef struct {
-    GF x;
-    GF y;
+    GF x, y;
 } Point;
 
-static Point *D = NULL;
-static int nD = 0;
+static Point *D;
+static int nD;
 
 static GF eval_curve(GF x, GF y)
 {
     GF f = 0;
 
-    for (int i = 0; i < 8; ++i) {
-        const unsigned short *t = cc[i]; //BBGS_EQUATION[i];
-
-        if (t[2] != 0) {
-            fprintf(stderr,
-                    "This adapter currently expects z-degree 0.\n");
-            exit(EXIT_FAILURE);
-        }
+    for (int i = 0; i < curve->nterms; ++i) {
+        const unsigned short *t = curve->t[i];
 
         GF v = (GF)t[3];
 
@@ -280,12 +592,11 @@ static int enumerate_points(void)
     if (!D)
         return 0;
 
-
     nD = 0;
 
     for (int x = 0; x < Q; ++x) {
         for (int y = 0; y < Q; ++y) {
-            if (eval_curve((GF)x, (GF)y) == 0) {
+            if (!eval_curve((GF)x, (GF)y)) {
                 D[nD++] = (Point){(GF)x, (GF)y};
             }
         }
@@ -295,75 +606,14 @@ static int enumerate_points(void)
 }
 
 /* ============================================================
- * Linear algebra over GF(64)
- * ============================================================ */
-
-/* Reduced row echelon form. */
-static int rref(GF *m, int rows, int cols, int *piv)
-{
-    int rank = 0;
-
-    for (int col = 0; col < cols && rank < rows; ++col) {
-        int p = rank;
-
-        while (p < rows &&
-               m[(size_t)p * cols + col] == 0)
-            ++p;
-
-        if (p == rows)
-            continue;
-
-        if (p != rank) {
-            for (int j = 0; j < cols; ++j) {
-                GF t = m[(size_t)rank * cols + j];
-
-                m[(size_t)rank * cols + j] =
-                    m[(size_t)p * cols + j];
-
-                m[(size_t)p * cols + j] = t;
-            }
-        }
-
-        GF s = gf_inv(m[(size_t)rank * cols + col]);
-
-        for (int j = 0; j < cols; ++j) {
-            m[(size_t)rank * cols + j] =
-                gf_mul(m[(size_t)rank * cols + j], s);
-        }
-
-        for (int i = 0; i < rows; ++i) {
-            if (i == rank)
-                continue;
-
-            GF f = m[(size_t)i * cols + col];
-
-            if (!f)
-                continue;
-
-            for (int j = 0; j < cols; ++j) {
-                m[(size_t)i * cols + j] ^=
-                    gf_mul(f, m[(size_t)rank * cols + j]);
-            }
-        }
-
-        piv[rank++] = col;
-    }
-
-    return rank;
-}
-
-/* ============================================================
- * Row space
+ * Incremental row echelon basis
  * ============================================================ */
 
 typedef struct {
-    int nrows;
-    int ncols;
-    int cap;
-
+    int nrows, ncols, cap;
     GF *echelon;
-    GF *raw;
     int *piv;
+    GF *w;
 } RowSpace;
 
 static int rs_init(RowSpace *s, int cap, int ncols)
@@ -373,24 +623,44 @@ static int rs_init(RowSpace *s, int cap, int ncols)
     s->cap = cap;
     s->ncols = ncols;
 
-    s->echelon = calloc((size_t)cap * ncols, 1);
-    s->raw = calloc((size_t)cap * ncols, 1);
-    s->piv = malloc((size_t)cap * sizeof(int));
+    s->echelon = calloc(
+        (size_t)(cap ? cap : 1) * ncols, 1);
 
-    return s->echelon && s->raw && s->piv;
+    s->piv = malloc(
+        (size_t)(cap ? cap : 1) * sizeof(int));
+
+    s->w = malloc((size_t)ncols);
+
+    if (!s->echelon || !s->piv || !s->w) {
+        free(s->echelon);
+        free(s->piv);
+        free(s->w);
+        memset(s, 0, sizeof(*s));
+        return 0;
+    }
+
+    return 1;
 }
+
+static void rs_free(RowSpace *s)
+{
+    free(s->echelon);
+    free(s->piv);
+    free(s->w);
+    memset(s, 0, sizeof(*s));
+}
+
+/* 1: 独立行, 0: 従属, -1: 容量不足 */
 
 static int rs_add(RowSpace *s, const GF *v)
 {
-    GF *w = malloc((size_t)s->ncols);
-
-    if (!w)
-        return -1;
+    GF *w = s->w;
 
     memcpy(w, v, (size_t)s->ncols);
 
     for (int r = 0; r < s->nrows; ++r) {
-        GF f = w[s->piv[r]];
+        int p = s->piv[r];
+        GF f = w[p];
 
         if (!f)
             continue;
@@ -398,7 +668,7 @@ static int rs_add(RowSpace *s, const GF *v)
         const GF *e =
             s->echelon + (size_t)r * s->ncols;
 
-        for (int j = 0; j < s->ncols; ++j)
+        for (int j = p; j < s->ncols; ++j)
             w[j] ^= gf_mul(f, e[j]);
     }
 
@@ -407,271 +677,41 @@ static int rs_add(RowSpace *s, const GF *v)
     while (p < s->ncols && !w[p])
         ++p;
 
-    if (p == s->ncols) {
-        free(w);
+    if (p == s->ncols)
         return 0;
-    }
 
-    if (s->nrows >= s->cap) {
-        free(w);
+    if (s->nrows >= s->cap)
         return -1;
-    }
 
     GF inv = gf_inv(w[p]);
 
-    GF *e =
-        s->echelon + (size_t)s->nrows * s->ncols;
+    for (int j = p; j < s->ncols; ++j)
+        w[j] = gf_mul(w[j], inv);
 
-    for (int j = 0; j < s->ncols; ++j)
-        e[j] = gf_mul(w[j], inv);
+    int pos = 0;
+
+    while (pos < s->nrows && s->piv[pos] < p)
+        ++pos;
+
+    if (pos < s->nrows) {
+        memmove(
+            s->echelon + (size_t)(pos + 1) * s->ncols,
+            s->echelon + (size_t)pos * s->ncols,
+            (size_t)(s->nrows - pos) * s->ncols);
+
+        memmove(
+            s->piv + pos + 1,
+            s->piv + pos,
+            (size_t)(s->nrows - pos) * sizeof(int));
+    }
 
     memcpy(
-        s->raw + (size_t)s->nrows * s->ncols,
-        v,
-        (size_t)s->ncols
-    );
+        s->echelon + (size_t)pos * s->ncols,
+        w,
+        (size_t)s->ncols);
 
-    s->piv[s->nrows++] = p;
-
-    free(w);
-    return 1;
-}
-
-static void rs_free(RowSpace *s)
-{
-    free(s->echelon);
-    free(s->raw);
-    free(s->piv);
-
-    memset(s, 0, sizeof(*s));
-}
-
-/* ============================================================
- * Evaluation bases
- * ============================================================ */
-
-typedef struct {
-    int count;
-
-    GF *v;       /* count x nD evaluation matrix */
-
-    int *ex;
-    int *ey;
-} EvalBasis;
-
-
-static int g_xmax = 1 << 20;   /* x の指数の上限。既定は制限なし */
-
-static int build_monomial_basis(int degree, EvalBasis *out)
-{
-    int xm = g_xmax < degree ? g_xmax : degree;
-
-    int cap = 0;
-    for (int i = 0; i <= xm; ++i)
-        cap += degree - i + 1;
-
-    if (cap > MAX_MONOMIALS)
-        return 0;
-
-    memset(out, 0, sizeof(*out));
-
-    out->v  = calloc((size_t)cap * nD, 1);
-    out->ex = malloc((size_t)cap * sizeof(int));
-    out->ey = malloc((size_t)cap * sizeof(int));
-
-    GF *xp = malloc((size_t)(xm + 1) * nD);
-    GF *yp = malloc((size_t)(degree + 1) * nD);
-
-    if (!out->v || !out->ex || !out->ey || !xp || !yp) {
-        free(out->v); free(out->ex); free(out->ey);
-        free(xp); free(yp);
-        memset(out, 0, sizeof(*out));
-        return 0;
-    }
-
-    /* x^i, y^j の表(点ごと) */
-    for (int p = 0; p < nD; ++p) {
-        xp[p] = 1;
-        yp[p] = 1;
-    }
-    for (int i = 1; i <= xm; ++i)
-        for (int p = 0; p < nD; ++p)
-            xp[(size_t)i * nD + p] =
-                gf_mul(xp[(size_t)(i - 1) * nD + p], D[p].x);
-    for (int j = 1; j <= degree; ++j)
-        for (int p = 0; p < nD; ++p)
-            yp[(size_t)j * nD + p] =
-                gf_mul(yp[(size_t)(j - 1) * nD + p], D[p].y);
-
-    /* 全次数 d ごとに (d,0), (d-1,1), ... の順。x の指数が上限を超えるものは飛ばす */
-    int count = 0;
-    for (int d = 0; d <= degree; ++d) {
-        for (int k = 0; k <= d; ++k) {
-            int i = d - k;
-            int j = k;
-
-            if (i > xm)
-                continue;
-
-            GF *row = out->v + (size_t)count * nD;
-
-            for (int p = 0; p < nD; ++p)
-                row[p] = gf_mul(xp[(size_t)i * nD + p],
-                                yp[(size_t)j * nD + p]);
-
-            out->ex[count] = i;
-            out->ey[count] = j;
-            ++count;
-        }
-    }
-    out->count = count;
-
-    free(xp);
-    free(yp);
-
-#ifdef CHECK_INDEP
-    /* 確認用: 評価ベクトルが独立かを調べる(コンパイル時に -DCHECK_INDEP) */
-    {
-        RowSpace rs;
-        if (rs_init(&rs, count, nD)) {
-            for (int k = 0; k < count; ++k)
-                if (rs_add(&rs, out->v + (size_t)k * nD) == 0)
-                    fprintf(stderr, "dependent: x^%d y^%d\n",
-                            out->ex[k], out->ey[k]);
-            rs_free(&rs);
-        }
-    }
-#endif
-
-    return 1;
-}
-
-/*
- * Build an independent evaluation basis from monomials x^i y^j
- * with total degree <= degree.
- *
- * This is an evaluation-space basis, not yet a proven
- * Riemann-Roch basis ordered by pole order.
- */
-static int build_monomial_basis2(int degree, EvalBasis *out)
-{
-    int cap = (degree + 1) * (degree + 2) / 2;
-
-    if (cap > MAX_MONOMIALS)
-        return 0;
-
-    RowSpace rs;
-
-    if (!rs_init(&rs, cap, nD))
-        return 0;
-
-    out->v = calloc((size_t)cap * nD, 1);
-    out->ex = malloc((size_t)cap * sizeof(int));
-    out->ey = malloc((size_t)cap * sizeof(int));
-
-    if (!out->v || !out->ex || !out->ey) {
-        rs_free(&rs);
-        return 0;
-    }
-
-    out->count = 0;
-
-    GF *v = malloc((size_t)nD);
-
-    if (!v) {
-        rs_free(&rs);
-        return 0;
-    }
-
-    for (int d = 0; d <= degree; ++d) {
-        for (int j = 0; j <= d; ++j) {
-            int i = d - j;
-
-            for (int p = 0; p < nD; ++p) {
-                v[p] = gf_mul(
-                    gf_pow(D[p].x, (unsigned)i),
-                    gf_pow(D[p].y, (unsigned)j)
-                );
-            }
-
-            int added = rs_add(&rs, v);
-
-            if (added < 0) {
-                free(v);
-                rs_free(&rs);
-                return 0;
-            }
-
-            if (added) {
-                int k = out->count++;
-
-                memcpy(
-                    out->v + (size_t)k * nD,
-                    v,
-                    (size_t)nD
-                );
-
-                out->ex[k] = i;
-                out->ey[k] = j;
-            }
-        }
-    }
-
-    free(v);
-    rs_free(&rs);
-
-    return 1;
-}
-
-/*
- * Construct H = span{ A_i * B_j }.
- * Products are coordinatewise products of evaluation vectors.
- */
-static int build_product_basis(
-    const EvalBasis *A,
-    const EvalBasis *B,
-    EvalBasis *H)
-{
-    RowSpace rs;
-
-    if (!rs_init(&rs, nD, nD))
-        return 0;
-
-    GF *v = malloc((size_t)nD);
-
-    if (!v) {
-        rs_free(&rs);
-        return 0;
-    }
-
-    for (int i = 0; i < A->count; ++i) {
-        for (int j = 0; j < B->count; ++j) {
-            for (int p = 0; p < nD; ++p) {
-                v[p] = gf_mul(
-                    A->v[(size_t)i * nD + p],
-                    B->v[(size_t)j * nD + p]
-                );
-            }
-
-            int added = rs_add(&rs, v);
-
-            if (added < 0) {
-                free(v);
-                rs_free(&rs);
-                return 0;
-            }
-        }
-    }
-
-    H->count = rs.nrows;
-    H->v = rs.raw;
-    H->ex = NULL;
-    H->ey = NULL;
-
-    rs.raw = NULL;
-
-    free(v);
-    rs_free(&rs);
+    s->piv[pos] = p;
+    ++s->nrows;
 
     return 1;
 }
@@ -680,68 +720,460 @@ static int build_product_basis(
  * Nullspace
  * ============================================================ */
 
-/* Right nullspace basis of matrix (rows x cols). */
 static GF *nullspace(
     const GF *in,
     int rows,
     int cols,
     int *dim)
 {
-    GF *m = malloc((size_t)rows * cols);
-    int *piv = malloc((size_t)(rows + 1) * sizeof(int));
-    uint8_t *is_pivot = calloc((size_t)cols, 1);
+    RowSpace rs;
 
-    if (!m || !piv || !is_pivot) {
-        free(m);
-        free(piv);
-        free(is_pivot);
+    if (!rs_init(&rs, rows, cols))
         return NULL;
+
+    for (int i = 0; i < rows; ++i) {
+        int r = rs_add(
+            &rs,
+            in + (size_t)i * cols);
+
+        if (r < 0) {
+            rs_free(&rs);
+            return NULL;
+        }
     }
 
-    memcpy(m, in, (size_t)rows * cols);
-
-    int rank = rref(m, rows, cols, piv);
-
-    for (int i = 0; i < rank; ++i)
-        is_pivot[piv[i]] = 1;
+    int rank = rs.nrows;
 
     *dim = cols - rank;
 
-    GF *basis = calloc((size_t)(*dim) * cols, 1);
+    GF *basis = calloc(
+        (size_t)(*dim > 0 ? *dim : 1) * cols, 1);
 
     if (!basis) {
-        free(m);
-        free(piv);
-        free(is_pivot);
+        rs_free(&rs);
         return NULL;
     }
 
+    uint8_t *is_pivot = calloc((size_t)cols, 1);
+
+    if (!is_pivot) {
+        free(basis);
+        rs_free(&rs);
+        return NULL;
+    }
+
+    for (int r = 0; r < rank; ++r)
+        is_pivot[rs.piv[r]] = 1;
+
     int d = 0;
 
-    for (int fc = 0; fc < cols; ++fc) {
-        if (is_pivot[fc])
+    for (int f = 0; f < cols; ++f) {
+        if (is_pivot[f])
             continue;
 
-        basis[(size_t)d * cols + fc] = 1;
+        GF *x = basis + (size_t)d * cols;
 
-        for (int r = 0; r < rank; ++r) {
-            basis[(size_t)d * cols + piv[r]] =
-                m[(size_t)r * cols + fc];
+        x[f] = 1;
+
+        for (int r = rank - 1; r >= 0; --r) {
+            int p = rs.piv[r];
+
+            const GF *e =
+                rs.echelon + (size_t)r * cols;
+
+            GF v = 0;
+
+            for (int j = p + 1; j < cols; ++j)
+                v ^= gf_mul(e[j], x[j]);
+
+            x[p] = v;
         }
 
         ++d;
     }
 
-    free(m);
-    free(piv);
     free(is_pivot);
+    rs_free(&rs);
 
     return basis;
 }
 
 /* ============================================================
- * Code membership and random codeword
+ * Evaluation bases
  * ============================================================ */
+
+typedef struct {
+    int count;
+    GF *v;
+    int *ex, *ey;
+} EvalBasis;
+
+static void free_basis(EvalBasis *b)
+{
+    free(b->v);
+    free(b->ex);
+    free(b->ey);
+    memset(b, 0, sizeof(*b));
+}
+
+static int build_basis_from_list(
+    int (*lst)[2],
+    int n,
+    EvalBasis *out)
+{
+    memset(out, 0, sizeof(*out));
+
+    if (n <= 0 || n > MAX_MONOMIALS)
+        return 0;
+
+    int xm = 0, ym = 0, maxdeg = 0;
+
+    for (int k = 0; k < n; ++k) {
+        if (lst[k][0] > xm)
+            xm = lst[k][0];
+
+        if (lst[k][1] > ym)
+            ym = lst[k][1];
+
+        if (lst[k][0] + lst[k][1] > maxdeg)
+            maxdeg = lst[k][0] + lst[k][1];
+    }
+
+    int dF = curve_degree();
+
+    int known =
+        maxdeg < dF &&
+        (long)nD > (long)maxdeg * dF;
+
+    int use_rs = !known;
+
+    RowSpace rs;
+    int rs_ok = 0;
+    int ok = 1;
+
+    GF *xp = malloc((size_t)(xm + 1) * nD);
+    GF *yp = malloc((size_t)(ym + 1) * nD);
+    GF *row = malloc((size_t)nD);
+
+    out->v = calloc((size_t)n * nD, 1);
+    out->ex = malloc((size_t)n * sizeof(int));
+    out->ey = malloc((size_t)n * sizeof(int));
+
+    if (!xp || !yp || !row ||
+        !out->v || !out->ex || !out->ey)
+        ok = 0;
+
+    if (ok && use_rs) {
+        rs_ok = rs_init(&rs, n, nD);
+        if (!rs_ok)
+            ok = 0;
+    }
+
+    if (ok) {
+        for (int p = 0; p < nD; ++p) {
+            xp[p] = 1;
+            yp[p] = 1;
+        }
+
+        for (int i = 1; i <= xm; ++i) {
+            for (int p = 0; p < nD; ++p) {
+                xp[(size_t)i * nD + p] =
+                    gf_mul(
+                        xp[(size_t)(i - 1) * nD + p],
+                        D[p].x);
+            }
+        }
+
+        for (int j = 1; j <= ym; ++j) {
+            for (int p = 0; p < nD; ++p) {
+                yp[(size_t)j * nD + p] =
+                    gf_mul(
+                        yp[(size_t)(j - 1) * nD + p],
+                        D[p].y);
+            }
+        }
+
+        int count = 0;
+
+        for (int k = 0; k < n; ++k) {
+            int i = lst[k][0];
+            int j = lst[k][1];
+
+            for (int p = 0; p < nD; ++p) {
+                row[p] =
+                    gf_mul(
+                        xp[(size_t)i * nD + p],
+                        yp[(size_t)j * nD + p]);
+            }
+
+            if (use_rs) {
+                int added = rs_add(&rs, row);
+
+                if (added < 0) {
+                    ok = 0;
+                    break;
+                }
+
+                if (!added)
+                    continue;
+            }
+
+            memcpy(
+                out->v + (size_t)count * nD,
+                row,
+                (size_t)nD);
+
+            out->ex[count] = i;
+            out->ey[count] = j;
+
+            ++count;
+        }
+
+        out->count = count;
+    }
+
+    if (rs_ok)
+        rs_free(&rs);
+
+    free(xp);
+    free(yp);
+    free(row);
+
+    if (!ok) {
+        free_basis(out);
+        return 0;
+    }
+
+    return 1;
+}
+
+static int build_monomial_basis(
+    int degree,
+    int xm,
+    EvalBasis *out)
+{
+    if (xm > degree)
+        xm = degree;
+
+    int cap = 0;
+
+    for (int i = 0; i <= xm; ++i)
+        cap += degree - i + 1;
+
+    if (cap > MAX_MONOMIALS) {
+        memset(out, 0, sizeof(*out));
+        return 0;
+    }
+
+    int (*lst)[2] =
+        malloc((size_t)cap * sizeof(*lst));
+
+    if (!lst) {
+        memset(out, 0, sizeof(*out));
+        return 0;
+    }
+
+    int n = 0;
+
+    for (int d = 0; d <= degree; ++d) {
+        for (int k = 0; k <= d; ++k) {
+            if (d - k <= xm) {
+                lst[n][0] = d - k;
+                lst[n][1] = k;
+                ++n;
+            }
+        }
+    }
+
+    int r = build_basis_from_list(lst, n, out);
+
+    free(lst);
+
+    return r;
+}
+
+/* ============================================================
+ * mkbase
+ * ============================================================ */
+
+#define MK_XMAX 8
+#define MK_MAXDEG 100
+#define MK_BBCAP ((MK_XMAX + 1) * (MK_MAXDEG + 1))
+
+static int mkbase(int bb[][2])
+{
+    int count = 0;
+
+    for (int dg = 0; dg <= MK_MAXDEG; ++dg) {
+        int x0 = dg < MK_XMAX ? dg : MK_XMAX;
+
+        for (int x = x0; x >= 0; --x) {
+            bb[count][0] = x;
+            bb[count][1] = dg - x;
+            ++count;
+        }
+    }
+
+    return count;
+}
+
+static int build_mk_basis(int degree, EvalBasis *out)
+{
+    static int bb[MK_BBCAP][2];
+
+    int cnt = mkbase(bb);
+    int n = 0;
+
+    while (n < cnt &&
+           bb[n][0] + bb[n][1] <= degree)
+        ++n;
+
+    return build_basis_from_list(bb, n, out);
+}
+
+static int mk_count(int degree)
+{
+    static int bb[MK_BBCAP][2];
+
+    int cnt = mkbase(bb);
+    int n = 0;
+
+    while (n < cnt &&
+           bb[n][0] + bb[n][1] <= degree)
+        ++n;
+
+    return n;
+}
+
+static int basis_count(int degree)
+{
+    return g_full
+        ? (degree + 1) * (degree + 2) / 2
+        : mk_count(degree);
+}
+
+static int build_ab_basis(int degree, EvalBasis *out)
+{
+    return g_full
+        ? build_monomial_basis(degree, degree, out)
+        : build_mk_basis(degree, out);
+}
+
+static int basis_xmax(int degree)
+{
+    return g_full
+        ? degree
+        : (MK_XMAX < degree ? MK_XMAX : degree);
+}
+
+/* ============================================================
+ * Random generator
+ * ============================================================ */
+
+static uint64_t rng_next(uint64_t *s)
+{
+    uint64_t z = (*s += 0x9E3779B97F4A7C15ULL);
+
+    z = (z ^ (z >> 30)) *
+        0xBF58476D1CE4E5B9ULL;
+
+    z = (z ^ (z >> 27)) *
+        0x94D049BB133111EBULL;
+
+    return z ^ (z >> 31);
+}
+
+/* ============================================================
+ * Codeword generation
+ * ============================================================ */
+
+typedef struct {
+    GF *m;
+    int *piv;
+    uint8_t *isp;
+    int rank;
+} CodeGen;
+
+static void codegen_free(CodeGen *g)
+{
+    free(g->m);
+    free(g->piv);
+    free(g->isp);
+    memset(g, 0, sizeof(*g));
+}
+
+static int codegen_init(CodeGen *g, const EvalBasis *H)
+{
+    memset(g, 0, sizeof(*g));
+
+    RowSpace rs;
+
+    if (!rs_init(&rs, H->count, nD))
+        return 0;
+
+    for (int i = 0; i < H->count; ++i) {
+        if (rs_add(
+                &rs,
+                H->v + (size_t)i * nD) < 0) {
+            rs_free(&rs);
+            return 0;
+        }
+    }
+
+    g->rank = rs.nrows;
+
+    g->m = malloc((size_t)g->rank * nD);
+
+    g->piv = malloc(
+        (size_t)(g->rank ? g->rank : 1) * sizeof(int));
+
+    g->isp = calloc((size_t)nD, 1);
+
+    if (!g->m || !g->piv || !g->isp) {
+        codegen_free(g);
+        rs_free(&rs);
+        return 0;
+    }
+
+    memcpy(g->m, rs.echelon,
+           (size_t)g->rank * nD);
+
+    memcpy(g->piv, rs.piv,
+           (size_t)g->rank * sizeof(int));
+
+    for (int r = 0; r < g->rank; ++r)
+        g->isp[g->piv[r]] = 1;
+
+    rs_free(&rs);
+
+    return 1;
+}
+
+static void random_codeword(
+    const CodeGen *g,
+    GF *word,
+    uint64_t *state)
+{
+    for (int p = 0; p < nD; ++p) {
+        word[p] = g->isp[p]
+            ? 0
+            : (GF)(rng_next(state) & (uint64_t)(Q - 1));
+    }
+
+    for (int r = g->rank - 1; r >= 0; --r) {
+        int p = g->piv[r];
+
+        const GF *row =
+            g->m + (size_t)r * nD;
+
+        GF s = 0;
+
+        for (int j = p + 1; j < nD; ++j)
+            s ^= gf_mul(row[j], word[j]);
+
+        word[p] = s;
+    }
+}
 
 static int in_code(const EvalBasis *H, const GF *word)
 {
@@ -751,8 +1183,7 @@ static int in_code(const EvalBasis *H, const GF *word)
         for (int p = 0; p < nD; ++p) {
             s ^= gf_mul(
                 H->v[(size_t)i * nD + p],
-                word[p]
-            );
+                word[p]);
         }
 
         if (s)
@@ -762,104 +1193,189 @@ static int in_code(const EvalBasis *H, const GF *word)
     return 1;
 }
 
-static int random_codeword(
-    const EvalBasis *H,
-    GF *word,
-    uint64_t *state)
+/* ============================================================
+ * Syndrome
+ * ============================================================ */
+
+static void compute_syndrome(
+    const EvalBasis *A,
+    const EvalBasis *B,
+    const GF *received,
+    GF *S,
+    GF *tmp)
 {
-    GF *m = malloc((size_t)H->count * nD);
-    int *piv = malloc((size_t)(H->count + 1) * sizeof(int));
-    uint8_t *isp = calloc((size_t)nD, 1);
+    int k1 = A->count;
+    int k2 = B->count;
 
-    if (!m || !piv || !isp) {
-        free(m);
-        free(piv);
-        free(isp);
-        return 0;
-    }
-
-    memcpy(m, H->v, (size_t)H->count * nD);
-
-    int rank = rref(m, H->count, nD, piv);
-
-    for (int r = 0; r < rank; ++r)
-        isp[piv[r]] = 1;
-
-    for (int p = 0; p < nD; ++p) {
-        if (isp[p]) {
-            word[p] = 0;
-        } else {
-            *state += 0x9E3779B97F4A7C15ULL;
-
-            uint64_t z = *state;
-
-            z = (z ^ (z >> 30)) *
-                0xBF58476D1CE4E5B9ULL;
-
-            z = (z ^ (z >> 27)) *
-                0x94D049BB133111EBULL;
-
-            z ^= z >> 31;
-
-            word[p] = (GF)(z & 63u);
-        }
-    }
-
-    for (int r = 0; r < rank; ++r) {
-        GF s = 0;
-
+    for (int i = 0; i < k1; ++i) {
         for (int p = 0; p < nD; ++p) {
-            if (!isp[p]) {
-                s ^= gf_mul(
-                    m[(size_t)r * nD + p],
-                    word[p]
-                );
-            }
+            tmp[p] = gf_mul(
+                received[p],
+                A->v[(size_t)i * nD + p]);
         }
 
-        word[piv[r]] = s;
+        for (int j = 0; j < k2; ++j) {
+            GF s = 0;
+
+            for (int p = 0; p < nD; ++p) {
+                s ^= gf_mul(
+                    tmp[p],
+                    B->v[(size_t)j * nD + p]);
+            }
+
+            S[(size_t)i * k2 + j] = s;
+        }
     }
-
-    int ok = in_code(H, word);
-
-    free(m);
-    free(piv);
-    free(isp);
-
-    return ok;
 }
 
 /* ============================================================
- * ECP-style decoder
+ * Solve Mx=b
  * ============================================================ */
-/*
- * Syndrome-only ECP decoder.
- *
- * Input:
- *   A, B : evaluation bases
- *   S    : syndrome matrix (k1 x k2)
- *
- * Output:
- *   error_vec : recovered error vector (length nD)
- *   nerr      : number of nonzero error values
- *
- * The decoder does NOT receive:
- *   - received word
- *   - original codeword
- *   - actual error positions
- *   - actual error values
- *
- * Return:
- *   1 = unique solution recovered
- *   0 = decoding failure or ambiguous solution
- */
+
+static int solve_unique(
+    const GF *M,
+    const GF *b,
+    int rows,
+    int cols,
+    GF *x)
+{
+    int cap = rows < cols ? rows : cols;
+
+    RowSpace rs;
+
+    if (!rs_init(&rs, cap, cols))
+        return 0;
+
+    GF *brhs = calloc(
+        (size_t)(cap ? cap : 1), 1);
+
+    if (!brhs) {
+        rs_free(&rs);
+        return 0;
+    }
+
+    int consistent = 1;
+
+    for (int i = 0; i < rows; ++i) {
+        memcpy(
+            rs.w,
+            M + (size_t)i * cols,
+            (size_t)cols);
+
+        GF value = b[i];
+
+        for (int r = 0; r < rs.nrows; ++r) {
+            int p = rs.piv[r];
+
+            GF f = rs.w[p];
+
+            if (!f)
+                continue;
+
+            const GF *e =
+                rs.echelon + (size_t)r * cols;
+
+            for (int j = p; j < cols; ++j)
+                rs.w[j] ^= gf_mul(f, e[j]);
+
+            value ^= gf_mul(f, brhs[r]);
+        }
+
+        int p = 0;
+
+        while (p < cols && !rs.w[p])
+            ++p;
+
+        if (p == cols) {
+            if (value)
+                consistent = 0;
+
+            continue;
+        }
+
+        if (rs.nrows >= cap) {
+            consistent = 0;
+            continue;
+        }
+
+        GF inv = gf_inv(rs.w[p]);
+
+        for (int j = p; j < cols; ++j)
+            rs.w[j] = gf_mul(rs.w[j], inv);
+
+        value = gf_mul(value, inv);
+
+        int pos = 0;
+
+        while (pos < rs.nrows &&
+               rs.piv[pos] < p)
+            ++pos;
+
+        if (pos < rs.nrows) {
+            memmove(
+                rs.echelon + (size_t)(pos + 1) * cols,
+                rs.echelon + (size_t)pos * cols,
+                (size_t)(rs.nrows - pos) * cols);
+
+            memmove(
+                rs.piv + pos + 1,
+                rs.piv + pos,
+                (size_t)(rs.nrows - pos) * sizeof(int));
+
+            memmove(
+                brhs + pos + 1,
+                brhs + pos,
+                (size_t)(rs.nrows - pos) * sizeof(GF));
+        }
+
+        memcpy(
+            rs.echelon + (size_t)pos * cols,
+            rs.w,
+            (size_t)cols);
+
+        rs.piv[pos] = p;
+        brhs[pos] = value;
+
+        ++rs.nrows;
+    }
+
+    int good = consistent && rs.nrows == cols;
+
+    if (good) {
+        memset(x, 0, (size_t)cols);
+
+        for (int r = rs.nrows - 1; r >= 0; --r) {
+            int p = rs.piv[r];
+
+            const GF *e =
+                rs.echelon + (size_t)r * cols;
+
+            GF v = brhs[r];
+
+            for (int j = p + 1; j < cols; ++j)
+                v ^= gf_mul(e[j], x[j]);
+
+            x[p] = v;
+        }
+    }
+
+    free(brhs);
+    rs_free(&rs);
+
+    return good;
+}
+
+/* ============================================================
+ * Decoder
+ * ============================================================ */
+
 static int decode(
     const EvalBasis *A,
     const EvalBasis *B,
     const GF *S,
+    int maxnc,
     GF *error_vec,
-    int *nerr
-)
+    int *nerr)
 {
     int k1 = A->count;
     int k2 = B->count;
@@ -867,7 +1383,6 @@ static int decode(
     memset(error_vec, 0, (size_t)nD);
     *nerr = 0;
 
-    /* Check whether syndrome is zero. */
     int allzero = 1;
 
     for (int i = 0; i < k1 * k2; ++i) {
@@ -880,11 +1395,8 @@ static int decode(
     if (allzero)
         return 1;
 
-    /*
-     * Find right kernel of S^T.
-     *
-     * S^T has dimensions k2 x k1.
-     */
+    /* S^T の右核 */
+
     GF *ST = malloc((size_t)k2 * k1);
 
     if (!ST)
@@ -903,14 +1415,19 @@ static int decode(
 
     free(ST);
 
+    if (g_verbose) {
+        fprintf(stderr,
+                "kernel dim=%d (A.count=%d)\n",
+                dim, k1);
+    }
+
     if (!ker || dim == 0) {
         free(ker);
         return 0;
     }
 
-    /*
-     * Find common zeros of all kernel functions.
-     */
+    /* 核の関数すべての共通零点 */
+
     int *cand = malloc((size_t)nD * sizeof(int));
 
     if (!cand) {
@@ -923,20 +1440,17 @@ static int decode(
     for (int p = 0; p < nD; ++p) {
         int common_zero = 1;
 
-        for (int v = 0; v < dim; ++v) {
+        for (int v = 0; v < dim && common_zero; ++v) {
             GF z = 0;
 
             for (int i = 0; i < k1; ++i) {
                 z ^= gf_mul(
                     ker[(size_t)v * k1 + i],
-                    A->v[(size_t)i * nD + p]
-                );
+                    A->v[(size_t)i * nD + p]);
             }
 
-            if (z) {
+            if (z)
                 common_zero = 0;
-                break;
-            }
         }
 
         if (common_zero)
@@ -945,101 +1459,78 @@ static int decode(
 
     free(ker);
 
-    /*
-     * Reject impossible or excessively large candidate sets.
-     */
-    if (nc == 0 || nc > k1 * k2) {
+    if (g_verbose) {
+        fprintf(stderr,
+                "candidates nc=%d (limit %d)\n",
+                nc, maxnc);
+    }
+
+    if (nc == 0 || nc > maxnc) {
         free(cand);
         return 0;
     }
 
-    /*
-     * Solve:
-     *
-     * S[i,j] = sum_c e_c A_i(P_c) B_j(P_c)
-     *
-     * Unknowns are only the error values e_c.
-     */
+    /* M e = S */
+
     int rows = k1 * k2;
-    int cols = nc + 1;
 
-    GF *aug = calloc((size_t)rows * cols, 1);
-    int *piv = malloc((size_t)rows * sizeof(int));
+    GF *M = calloc((size_t)rows * nc, 1);
+    GF *rhs = malloc((size_t)rows);
+    GF *solution = calloc((size_t)nc, 1);
 
-    if (!aug || !piv) {
-        free(aug);
-        free(piv);
+    if (!M || !rhs || !solution) {
+        free(M);
+        free(rhs);
+        free(solution);
         free(cand);
         return 0;
     }
 
     for (int i = 0; i < k1; ++i) {
         for (int j = 0; j < k2; ++j) {
-
             int r = i * k2 + j;
+
+            rhs[r] = S[(size_t)i * k2 + j];
 
             for (int c = 0; c < nc; ++c) {
                 int p = cand[c];
 
-                aug[(size_t)r * cols + c] =
+                M[(size_t)r * nc + c] =
                     gf_mul(
                         A->v[(size_t)i * nD + p],
-                        B->v[(size_t)j * nD + p]
-                    );
+                        B->v[(size_t)j * nD + p]);
             }
-
-            aug[(size_t)r * cols + nc] =
-                S[(size_t)i * k2 + j];
         }
     }
 
-    /*
-     * Solve the augmented linear system.
-     */
-    int rank = rref(aug, rows, cols, piv);
-
-    /*
-     * Unique solution requires:
-     *   rank = nc
-     *   RHS column is not a pivot.
-     */
-    int good = (rank == nc);
-
-    for (int r = 0; r < rank && good; ++r) {
-        if (piv[r] == nc)
-            good = 0;
-    }
+    int good = solve_unique(
+        M, rhs, rows, nc, solution);
 
     if (good) {
         for (int c = 0; c < nc; ++c) {
-            GF e = aug[(size_t)c * cols + nc];
+            error_vec[cand[c]] = solution[c];
 
-            error_vec[cand[c]] = e;
-
-            if (e)
+            if (solution[c])
                 ++*nerr;
         }
 
-        /*
-         * Independent algebraic consistency check:
-         * reconstruct the entire syndrome from error_vec.
-         */
+        /* シンドローム再構成による検証 */
+
         for (int i = 0; i < k1 && good; ++i) {
             for (int j = 0; j < k2 && good; ++j) {
-
                 GF check = 0;
 
-                for (int p = 0; p < nD; ++p) {
-                    if (!error_vec[p])
+                for (int c = 0; c < nc; ++c) {
+                    int p = cand[c];
+
+                    if (!solution[c])
                         continue;
 
                     check ^= gf_mul(
-                        error_vec[p],
+                        solution[c],
                         gf_mul(
                             A->v[(size_t)i * nD + p],
-                            B->v[(size_t)j * nD + p]
-                        )
-                    );
+                            B->v[(size_t)j * nD + p]));
                 }
 
                 if (check != S[(size_t)i * k2 + j])
@@ -1052,181 +1543,61 @@ static int decode(
         memset(error_vec, 0, (size_t)nD);
         *nerr = 0;
     }
-    //free(error_vec);
-    free(aug);
-    free(piv);
+
+    free(M);
+    free(rhs);
+    free(solution);
     free(cand);
 
     return good;
 }
 
-mterm
-obase (int a, int b)
-{
-  int i, j, k;
-  mterm c = { 0 };
-
-  c.n[0] = a;
-  c.n[1] = b;
-
-
-  return c;
-}
-
-
-
-
-int
-mkbase (mterm * aa)
-{
-  int i, j, k, l, count;
-  int d[256][2] = { 0 };
-  int bb[256][2] = { 0 };
-
-
-  count = 1;
-
-  for (i = 0; i < 20; i++)
-    {
-      k = 0;
-      j = i;
-      while ((d[i][0] + d[i][1]) < i && i < 5)
-	{
-	  d[k][1] = k;
-	  d[k][0] = j - k;
-	  printf ("k1=%d %d\n", j - k, k);
-	  k++;
-
-	}
-      for (l = 0; l < k; l++)
-	{
-	  bb[count][0] = d[l][0];
-	  bb[count++][1] = d[l][1];
-	  //    printf("a%d %d\n",d[l][0],d[l][1]);
-	}
-
-      if (i > 4)
-	{
-	  l = i - 4;
-	  j = 4;
-	  while (d[i][0] + d[i][1] < i && l < N - 1)
-	    {
-	      d[k][0] = j;
-	      d[k][1] = l;
-	      k++;
-	      j--;
-	      l++;
-	      printf ("k2=%d", k);
-	      if (j < 0)
-		break;
-	    }
-	  for (l = 0; l < k; l++)
-	    {
-	      bb[count][0] = d[l][0];
-	      bb[count++][1] = d[l][1];
-	      //    printf("a%d %d\n",d[l][0],d[l][1]);
-	    }
-	}
-
-
-    }
-
-  for (i = 0; i < 15 * 15; i++)
-    printf ("d=%d %d\n", bb[i][0], bb[i][1]);
-  // exit(1);
-
-
-  for (i = 0; i < 15 * 15; i++)
-    {
-      printf ("%d %d\n", bb[i][0], bb[i][1]);
-      //for(j=0;j<N-1;j++){
-      //  if(bb[i][0]+bb[i][1]<10){
-      aa[i] = obase (bb[i][0], bb[i][1]);
-      aa[i].a = 1;
-      //      }
-      // }
-    }
-  // exit(1);
-
-  return count;
-}
-
-
 /* ============================================================
- * Random generator and command-line interface
+ * Command line
  * ============================================================ */
-
-static uint64_t rng_next(uint64_t *s)
-{
-    uint64_t z =
-        (*s += 0x9E3779B97F4A7C15ULL);
-
-    z = (z ^ (z >> 30)) *
-        0xBF58476D1CE4E5B9ULL;
-
-    z = (z ^ (z >> 27)) *
-        0x94D049BB133111EBULL;
-
-    return z ^ (z >> 31);
-}
 
 static int parse_int(const char *s, int *v)
 {
     char *e = NULL;
+    errno = 0;
+
     long x = strtol(s, &e, 10);
 
-    if (!s[0] || !e || *e ||
-        x < 0 || x > 1000000)
+    if (!s[0] || errno == ERANGE ||
+        !e || *e || x < 0 || x > 1000000)
         return 0;
 
     *v = (int)x;
+
     return 1;
 }
 
-static void free_basis(EvalBasis *b)
+static int parse_uint(
+    const char *s,
+    unsigned int *v)
 {
-    free(b->v);
-    free(b->ex);
-    free(b->ey);
+    char *e = NULL;
 
-    memset(b, 0, sizeof(*b));
+    if (!s[0] || s[0] == '-')
+        return 0;
+
+    errno = 0;
+
+    unsigned long x = strtoul(s, &e, 10);
+
+    if (errno == ERANGE || !e || *e ||
+        x > UINT_MAX)
+        return 0;
+
+    *v = (unsigned int)x;
+
+    return 1;
 }
 
-static void compute_syndrome(
-    const EvalBasis *A,
-    const EvalBasis *B,
-    const GF *received,
-    GF *S
-)
+static double now(void)
 {
-    int k1 = A->count;
-    int k2 = B->count;
-
-    memset(S, 0, (size_t)k1 * k2);
-
-    for (int i = 0; i < k1; ++i) {
-        for (int j = 0; j < k2; ++j) {
-
-            GF s = 0;
-
-            for (int p = 0; p < nD; ++p) {
-                s ^= gf_mul(
-                    received[p],
-                    gf_mul(
-                        A->v[(size_t)i * nD + p],
-                        B->v[(size_t)j * nD + p]
-                    )
-                );
-            }
-
-            S[(size_t)i * k2 + j] = s;
-        }
-    }
+    return (double)clock() / CLOCKS_PER_SEC;
 }
-
-
-
-
 
 /* ============================================================
  * Main
@@ -1234,93 +1605,458 @@ static void compute_syndrome(
 
 int main(int argc, char **argv)
 {
-    int da = 0;
-    int db = 0;
+    int da = 2;
+    int db = 2;
     int errors = 1;
     int trials = 1;
     int seed = 1;
 
+    int auto_mode = 0;
+    int margin = 0;
+    int hm = 6;
+
+    int use_bbgs = 0;
+    int curve_option = 0;
+
+    unsigned int bq = 0;
+    unsigned int ba = 0;
+    unsigned int bb = 0;
+
+    const char *cname = "cc";
+
+    /* --------------------------------------------------------
+     * Arguments
+     * -------------------------------------------------------- */
+
     for (int i = 1; i < argc; ++i) {
         int *dst = NULL;
-    
-    if (!strcmp(argv[i], "--da"))
+
+        if (!strcmp(argv[i], "--curve")) {
+            if (++i >= argc) {
+                fprintf(stderr, "missing curve name\n");
+                return 2;
+            }
+
+            cname = argv[i];
+            curve_option = 1;
+            continue;
+        }
+
+        else if (!strcmp(argv[i], "--bbgs")) {
+            if (i + 3 >= argc) {
+                fprintf(stderr,
+                        "--bbgs requires q a b\n");
+                return 2;
+            }
+
+            if (!parse_uint(argv[++i], &bq) ||
+                !parse_uint(argv[++i], &ba) ||
+                !parse_uint(argv[++i], &bb)) {
+                fprintf(stderr,
+                        "Invalid BBGS parameters\n");
+                return 2;
+            }
+
+            use_bbgs = 1;
+            continue;
+        }
+
+        else if (!strcmp(argv[i], "--verbose")) {
+            g_verbose = 1;
+            continue;
+        }
+
+        else if (!strcmp(argv[i], "--full")) {
+            g_full = 1;
+            continue;
+        }
+
+        else if (!strcmp(argv[i], "--auto")) {
+            auto_mode = 1;
+            continue;
+        }
+
+        else if (!strcmp(argv[i], "--margin"))
+            dst = &margin;
+
+        else if (!strcmp(argv[i], "--m"))
+            dst = &hm;
+
+        else if (!strcmp(argv[i], "--da"))
             dst = &da;
+
         else if (!strcmp(argv[i], "--db"))
             dst = &db;
+
         else if (!strcmp(argv[i], "--errors"))
             dst = &errors;
+
         else if (!strcmp(argv[i], "--trials"))
             dst = &trials;
+
         else if (!strcmp(argv[i], "--seed"))
             dst = &seed;
-        else if (!strcmp(argv[i], "--help") ||
-                 !strcmp(argv[i], "-h")) {
+
+        else if (!strcmp(argv[i], "-h") ||
+                 !strcmp(argv[i], "--help")) {
+
             printf(
-                "Usage: %s [--da N] [--db N] "
-                "[--errors N] [--trials N] [--seed N]\n",
-                argv[0]
-            );
+                "Usage:\n"
+                "  %s --curve NAME [options]\n"
+                "  %s --bbgs q a b [options]\n\n"
+                "Options:\n"
+                "  --m N\n"
+                "  --da N\n"
+                "  --db N\n"
+                "  --errors N\n"
+                "  --trials N\n"
+                "  --seed N\n"
+                "  --auto [--margin N]\n"
+                "  --full\n"
+                "  --verbose\n\n"
+                "Curves:",
+                argv[0], argv[0]);
+
+            for (int k = 0; k < NCURVES; ++k)
+                printf(" %s", CURVES[k].name);
+
+            printf("\n");
+
             return 0;
-        } else {
-            fprintf(stderr, "Unknown option: %s\n", argv[i]);
+        }
+
+        else {
+            fprintf(stderr,
+                    "Unknown option: %s\n",
+                    argv[i]);
             return 2;
         }
-        
-        int xmaxopt = 1 << 20;
-         if (!strcmp(argv[i], "--xmax")) dst = &xmaxopt;
+
         if (i + 1 >= argc ||
             !parse_int(argv[++i], dst)) {
-            fprintf(stderr, "Invalid option value\n");
+            fprintf(stderr,
+                    "Invalid option value\n");
             return 2;
         }
     }
 
-    if (da > 30 || db > 30 ||
-        errors < 0 || trials < 1) {
-        fprintf(stderr, "Invalid parameters.\n");
+    if (use_bbgs && curve_option) {
+        fprintf(stderr,
+                "Use either --bbgs or --curve, not both.\n");
         return 2;
     }
 
-    if (!gf_init()) {
-        fprintf(
-            stderr,
-            "GF(64) initialization failed for polynomial 0x43\n"
-        );
+    if (da > MK_MAXDEG ||
+        db > MK_MAXDEG ||
+        errors < 0 ||
+        trials < 1 ||
+        margin > MK_MAXDEG) {
+
+        fprintf(stderr,
+                "Invalid parameters (da, db <= %d).\n",
+                MK_MAXDEG);
+
+        return 2;
+    }
+
+    /* --------------------------------------------------------
+     * Curve selection
+     * -------------------------------------------------------- */
+
+    if (use_bbgs) {
+        if (!make_bbgs_curve(
+                bq, ba, bb, &cur_local)) {
+
+            fprintf(stderr,
+                    "BBGS curve generation failed.\n"
+                    "Requirements:\n"
+                    "  q must be a power of 2\n"
+                    "  gcd(a,b) must be 1\n"
+                    "  Q=q^(a+b-1) must be <= 256\n"
+                    "  a,b must be positive\n");
+
+            return 2;
+        }
+    }
+
+    else {
+        const CurveDef *c = find_curve(cname);
+
+        if (!c) {
+            fprintf(stderr,
+                    "Unknown curve: %s (use --help)\n",
+                    cname);
+            return 2;
+        }
+
+        cur_local = *c;
+    }
+
+    /* --------------------------------------------------------
+     * Hermite curve
+     * -------------------------------------------------------- */
+
+    if (!use_bbgs && !strcmp(cname, "he")) {
+        static const unsigned poly_table[9] = {
+            0, 0, 0x07, 0x0B, 0x13,
+            0x25, 0x43, 0x89, 0x11D
+        };
+
+        if (hm % 2 || hm < 2 || hm > 8) {
+            fprintf(stderr,
+                    "--m must be even, 2..8\n");
+            return 2;
+        }
+
+        unsigned int q = 1u << (hm / 2);
+
+        unsigned short h[3][4] = {
+            {(unsigned short)(q + 1),0,0,1},
+            {0,(unsigned short)q,0,1},
+            {0,1,0,1}
+        };
+
+        memcpy(he_buf, h, sizeof(h));
+
+        cur_local.m = hm;
+        cur_local.poly = poly_table[hm];
+    }
+
+    curve = &cur_local;
+
+    /* --------------------------------------------------------
+     * Finite field
+     * -------------------------------------------------------- */
+
+    if (!gf_init(curve->m, curve->poly)) {
+        fprintf(stderr,
+                "GF(2^%d) init failed for polynomial 0x%X\n",
+                curve->m, curve->poly);
         return 1;
     }
+
+    /* --------------------------------------------------------
+     * Enumerate affine points
+     * -------------------------------------------------------- */
+
+    double t0 = now();
 
     nD = enumerate_points();
 
     if (nD <= 0) {
-        fprintf(stderr, "Point enumeration failed\n");
+        fprintf(stderr,
+                "Point enumeration failed\n");
+        free(D);
         return 1;
     }
-//exit(1);
 
-    printf("Curve: seven-term BBGS input over GF(64)\n");
+    fprintf(stderr,
+            "[time] points: %.2fs\n",
+            now() - t0);
 
-    printf(
-        "F(x,y) = x^31*y^8 + x^30*y^16 "
-        "+ x^28*y^32 + x^24*y "
-        "+ x^16*y^2 + y^4 + x^32\n"
-    );
+    if (errors > nD) {
+        fprintf(stderr, "errors > n\n");
+        free(D);
+        return 2;
+    }
 
-    printf("Affine rational points: %d\n", nD);
-    //exit(1);
+    /* --------------------------------------------------------
+     * Curve information
+     * -------------------------------------------------------- */
 
+    printf("Curve %s over GF(%d)\n",
+           curve->name, Q);
+
+    if (use_bbgs) {
+        unsigned int c = ba + bb;
+        uint64_t qpower = 0;
+
+        pow_u64(bq, c - 1, &qpower);
+
+        printf("BBGS parameters:\n");
+        printf("q = %u\n", bq);
+        printf("a = %u\n", ba);
+        printf("b = %u\n", bb);
+        printf("c = %u\n", c);
+        printf("Q = %llu\n",
+               (unsigned long long)qpower);
+    }
+
+    printf("GF polynomial = 0x%X\n",
+           curve->poly);
+
+    printf("F(x,y) =");
+
+    for (int i = 0; i < curve->nterms; ++i) {
+        printf("%s%u*x^%u*y^%u",
+               i ? " + " : " ",
+               curve->t[i][3],
+               curve->t[i][0],
+               curve->t[i][1]);
+    }
+
+    printf("\nAffine rational points: %d\n", nD);
+
+    /* --------------------------------------------------------
+     * Automatic degree selection
+     * -------------------------------------------------------- */
+
+    int need_a = errors + 2 + margin;
+    int need_b = errors + margin;
+
+    if (auto_mode) {
+        da = -1;
+        db = -1;
+
+        for (int d = 0; d <= MK_MAXDEG; ++d) {
+            if (da < 0 && basis_count(d) >= need_a)
+                da = d;
+
+            if (db < 0 && basis_count(d) >= need_b)
+                db = d;
+        }
+
+        if (da < 0 || db < 0) {
+            fprintf(stderr,
+                    "errors=%d (margin %d) is too large: "
+                    "A.count is at most %d for da <= %d\n",
+                    errors,
+                    margin,
+                    basis_count(MK_MAXDEG),
+                    MK_MAXDEG);
+
+            free(D);
+            return 2;
+        }
+    }
+
+    /* --------------------------------------------------------
+     * Build A, B, H
+     * -------------------------------------------------------- */
 
     EvalBasis A = {0};
     EvalBasis B = {0};
     EvalBasis H = {0};
 
-    if (!build_monomial_basis(da, &A) ||
-        !build_monomial_basis(db, &B) ||
-        !build_product_basis(&A, &B, &H)) {
+    int xa, xb;
 
-        fprintf(
-            stderr,
-            "Basis construction failed.\n"
-        );
+    t0 = now();
+
+    for (;;) {
+        free_basis(&A);
+        free_basis(&B);
+        free_basis(&H);
+
+        xa = basis_xmax(da);
+        xb = basis_xmax(db);
+
+        if (!build_ab_basis(da, &A) ||
+            !build_ab_basis(db, &B) ||
+            !build_monomial_basis(
+                da + db, xa + xb, &H)) {
+
+            fprintf(stderr,
+                    "Basis construction failed.\n");
+
+            free_basis(&A);
+            free_basis(&B);
+            free_basis(&H);
+            free(D);
+
+            return 1;
+        }
+
+        if (!auto_mode)
+            break;
+
+        int short_a = A.count < need_a;
+        int short_b = B.count < need_b;
+
+        if (!short_a && !short_b)
+            break;
+
+        if (short_a)
+            ++da;
+
+        if (short_b)
+            ++db;
+
+        if (da > MK_MAXDEG ||
+            db > MK_MAXDEG) {
+
+            fprintf(stderr,
+                    "auto: da/db would exceed %d\n",
+                    MK_MAXDEG);
+
+            free_basis(&A);
+            free_basis(&B);
+            free_basis(&H);
+            free(D);
+
+            return 2;
+        }
+    }
+
+    fprintf(stderr,
+            "[time] basis: %.2fs\n",
+            now() - t0);
+
+    if (auto_mode) {
+        printf("auto: errors=%d margin=%d -> da=%d db=%d\n",
+               errors, margin, da, db);
+    }
+
+    printf(
+        "A basis: %d independent monomials "
+        "(total degree <= %d, x <= %d)\n",
+        A.count, da, xa);
+
+    printf(
+        "B basis: %d independent monomials "
+        "(total degree <= %d, x <= %d)\n",
+        B.count, db, xb);
+
+    printf(
+        "H basis: %d independent products; C = H^perp\n",
+        H.count);
+
+    printf(
+        "Code length n=%d; parity-check rank=%d; dimension k=%d\n",
+        nD, H.count, nD - H.count);
+
+    /* --------------------------------------------------------
+     * Allocate buffers
+     * -------------------------------------------------------- */
+
+    CodeGen cg = {0};
+
+    GF *cw = malloc((size_t)nD);
+    GF *received = malloc((size_t)nD);
+    GF *decoded = malloc((size_t)nD);
+    GF *error_vec = calloc((size_t)nD, 1);
+    GF *injected = calloc((size_t)nD, 1);
+    GF *tmp = malloc((size_t)nD);
+
+    GF *S = calloc(
+        (size_t)A.count * B.count, 1);
+
+    int *order = malloc(
+        (size_t)nD * sizeof(int));
+
+    if (!cw || !received || !decoded ||
+        !error_vec || !injected ||
+        !tmp || !S || !order) {
+
+        fprintf(stderr, "Allocation failed\n");
+
+        free(cw);
+        free(received);
+        free(decoded);
+        free(error_vec);
+        free(injected);
+        free(tmp);
+        free(S);
+        free(order);
 
         free_basis(&A);
         free_basis(&B);
@@ -1330,39 +2066,41 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    printf(
-        "A basis: %d independent monomials "
-        "(total degree <= %d)\n",
-        A.count, da
-    );
+    /* --------------------------------------------------------
+     * Code generator
+     * -------------------------------------------------------- */
 
-    printf(
-        "B basis: %d independent monomials "
-        "(total degree <= %d)\n",
-        B.count, db
-    );
+    t0 = now();
 
-    printf(
-        "H basis: %d independent products; C = H^perp\n",
-        H.count
-    );
+    if (!codegen_init(&cg, &H)) {
+        fprintf(stderr,
+                "Code generator allocation failed\n");
 
-    printf(
-        "Code length n=%d; parity-check rank=%d; dimension k=%d\n",
-        nD, H.count, nD - H.count
-    );
+        free(cw);
+        free(received);
+        free(decoded);
+        free(error_vec);
+        free(injected);
+        free(tmp);
+        free(S);
+        free(order);
 
-    GF *cw = malloc((size_t)nD);
-    GF *received = malloc((size_t)nD);
-    GF *decoded = malloc((size_t)nD);
-    GF *error_vec = calloc((size_t)nD, 1);
-    GF *injected = calloc((size_t)nD, 1);
+        free_basis(&A);
+        free_basis(&B);
+        free_basis(&H);
+        free(D);
 
-    int *order = malloc((size_t)nD * sizeof(int));
-if (!cw || !received || !decoded || !order || !injected || !error_vec) {
-    fprintf(stderr, "Allocation failed\n");
-    return 1;
-}
+        return 1;
+    }
+
+    fprintf(stderr,
+            "[time] codegen: %.2fs\n",
+            now() - t0);
+
+    /* --------------------------------------------------------
+     * Trials
+     * -------------------------------------------------------- */
+
     uint64_t rng =
         (uint64_t)(unsigned)seed +
         0x123456789abcdefULL;
@@ -1371,13 +2109,33 @@ if (!cw || !received || !decoded || !order || !injected || !error_vec) {
     int fail = 0;
     int miscorrect = 0;
 
+    double t_dec = 0;
+
     for (int tr = 0; tr < trials; ++tr) {
         memset(injected, 0, (size_t)nD);
-        if (!random_codeword(&H, cw, &rng)) {
-            fprintf(
-                stderr,
-                "Could not construct a codeword in ker(H)\n"
-            );
+
+        random_codeword(&cg, cw, &rng);
+
+        if (!in_code(&H, cw)) {
+            fprintf(stderr,
+                    "Could not construct a codeword in ker(H)\n");
+
+            codegen_free(&cg);
+
+            free(cw);
+            free(received);
+            free(decoded);
+            free(error_vec);
+            free(injected);
+            free(tmp);
+            free(S);
+            free(order);
+
+            free_basis(&A);
+            free_basis(&B);
+            free_basis(&H);
+            free(D);
+
             return 1;
         }
 
@@ -1387,68 +2145,56 @@ if (!cw || !received || !decoded || !order || !injected || !error_vec) {
             order[p] = p;
 
         for (int e = 0; e < errors; ++e) {
-            int j = e +
-                (int)(rng_next(&rng) % (uint64_t)(nD - e));
+            int j = e + (int)(
+                rng_next(&rng) % (uint64_t)(nD - e));
 
-            int tmp = order[e];
+            int t = order[e];
             order[e] = order[j];
-            order[j] = tmp;
+            order[j] = t;
 
-            GF value =
-                (GF)(1 + rng_next(&rng) % (Q - 1));
+            GF value = (GF)(
+                1 + rng_next(&rng) % (uint64_t)(Q - 1));
+
             received[order[e]] ^= value;
             injected[order[e]] ^= value;
-            //received[order[e]] ^= value;
         }
 
+        compute_syndrome(
+            &A, &B, received, S, tmp);
 
-//GF *error_vec = calloc((size_t)nD, 1);
+        double t1 = now();
 
-GF *S = calloc(
-    (size_t)A.count * B.count,
-    sizeof(GF)
-);
+        int recovered = 0;
 
-//GF *error_vec = calloc((size_t)nD, sizeof(GF));
+        int ok = decode(
+            &A, &B, S,
+            H.count,
+            error_vec,
+            &recovered);
 
-if (!S || !error_vec) {
-    fprintf(stderr, "Allocation failed\n");
-    return 1;
-}
+        t_dec += now() - t1;
 
-/* Verification side: calculate syndrome. */
-compute_syndrome(&A, &B, received, S);
+        int mismatch = 0;
 
-/* Decoder receives ONLY syndrome. */
-int recovered = 0;
+        for (int p = 0; p < nD; ++p) {
+            if (injected[p] != error_vec[p]) {
+                if (trials == 1) {
+                    printf(
+                        "MISMATCH position=%d "
+                        "injected=0x%02X decoded=0x%02X\n",
+                        p,
+                        injected[p],
+                        error_vec[p]);
+                }
 
-int ok = decode(
-    &A,
-    &B,
-    S,
-    error_vec,
-    &recovered
-);
+                ++mismatch;
+            }
+        }
 
-int mismatch = 0;
+        memcpy(decoded, received, (size_t)nD);
 
-for (int p = 0; p < nD; ++p) {
-    if (injected[p] != error_vec[p]) {
-        printf("MISMATCH position=%d injected=0x%02X decoded=0x%02X\n",
-               p, injected[p], error_vec[p]);
-        mismatch++;
-    }
-}
-
-printf("Mismatch positions/values: %d\n", mismatch);
-
-//exit(1);
-
-/* Verification side: correct received word. */
-memcpy(decoded, received, (size_t)nD);
-
-for (int p = 0; p < nD; ++p)
-    decoded[p] ^= error_vec[p];
+        for (int p = 0; p < nD; ++p)
+            decoded[p] ^= error_vec[p];
 
         int same =
             ok && memcmp(cw, decoded, (size_t)nD) == 0;
@@ -1461,52 +2207,57 @@ for (int p = 0; p < nD; ++p)
             ++fail;
 
         if (trials == 1) {
-            printf("\nInjected error vector:\n");
+            printf(
+                "Mismatch positions/values: %d\n",
+                mismatch);
 
+            printf(
+                "\nInjected error locations and values:\n");
 
-printf("\nInjected error locations and values:\n");
+            for (int p = 0; p < nD; ++p) {
+                if (injected[p]) {
+                    printf(
+                        "  position=%d value=0x%02X\n",
+                        p, injected[p]);
+                }
+            }
 
-for (int p = 0; p < nD; ++p) {
-    if (injected[p])
-        printf("  position=%d value=0x%02X\n",
-               p, injected[p]);
-}
+            printf(
+                "\nDecoded error locations and values:\n");
 
-printf("\nDecoded error locations and values:\n");
+            for (int p = 0; p < nD; ++p) {
+                if (error_vec[p]) {
+                    printf(
+                        "  position=%d value=0x%02X\n",
+                        p, error_vec[p]);
+                }
+            }
 
-for (int p = 0; p < nD; ++p) {
-    if (error_vec[p])
-        printf("  position=%d value=0x%02X\n",
-               p, error_vec[p]);
-}
-
-printf("\nDecoded error vector:\n");
-
-for (int i = 0; i < nD; ++i) {
-    GF e = received[i] ^ decoded[i];
-
-    if (e)
-        printf("  position=%d value=0x%02X\n", i, e);
-}
             printf(
                 "Trial: %s; injected errors=%d; "
                 "recovered nonzero corrections=%d\n",
                 same ? "PASS" :
                 (ok ? "MISCORRECTION" : "FAIL"),
                 errors,
-                recovered
-            );
+                recovered);
         }
-    free(S);
     }
 
     if (trials > 1) {
         printf(
             "Trials=%d: success=%d, miscorrection=%d, failure=%d\n",
-            trials, success, miscorrect, fail
-        );
+            trials, success, miscorrect, fail);
     }
-    
+
+    fprintf(stderr,
+            "[time] decode total: %.2fs\n",
+            t_dec);
+
+    /* --------------------------------------------------------
+     * Cleanup
+     * -------------------------------------------------------- */
+
+    codegen_free(&cg);
 
     free(injected);
     free(cw);
@@ -1514,6 +2265,8 @@ for (int i = 0; i < nD; ++i) {
     free(decoded);
     free(order);
     free(error_vec);
+    free(tmp);
+    free(S);
 
     free_basis(&A);
     free_basis(&B);
@@ -1521,5 +2274,5 @@ for (int i = 0; i < nD; ++i) {
 
     free(D);
 
-    return (success == trials) ? 0 : 1;
+    return success == trials ? 0 : 1;
 }

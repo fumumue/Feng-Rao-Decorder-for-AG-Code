@@ -12,6 +12,8 @@
 #include <string.h>
 #include <time.h>
 
+#include "binbo.c"
+
 #define MAXQ 256
 #define MAX_MONOMIALS 8192
 
