@@ -48,6 +48,8 @@ typedef uint8_t GF;
 
 #define BBGS_V 3
 
+static const GF *g_injected = NULL;   /* 検査用: 注入した誤り (任意) */
+
 typedef struct {
     unsigned short n[BBGS_V];
     unsigned short a;
@@ -350,6 +352,9 @@ static const CurveDef *curve;
 
 static int g_verbose = 0;
 static int g_full = 0;
+static int g_show_poly = 0;
+
+
 
 static const CurveDef *find_curve(const char *name)
 {
@@ -1365,6 +1370,180 @@ static int solve_unique(
     return good;
 }
 
+
+/*
+ * 誤り位置関数の表示。
+ * ker は S^T の右核の基底 (dim 本、各 k1 成分)。
+ * 各ベクトルは A の単項式 x^ex y^ey の係数列なので、
+ * L(x,y) = sum_i ker[i] * x^ex[i] * y^ey[i] として出力する。
+ * 係数は GF(2^m) の原始元 a (= 多項式 x) のべきで表す。
+ */
+static void print_locator_polys(
+    const EvalBasis *A,
+    const GF *ker,
+    int dim)
+{
+    int k1 = A->count;
+
+    printf("\nError locator functions "
+           "(kernel of S^T, dim=%d; a = primitive element):\n",
+           dim);
+
+    for (int v = 0; v < dim; ++v) {
+        printf("  L%d(x,y) =", v + 1);
+
+        int first = 1;
+
+        for (int i = 0; i < k1; ++i) {
+            GF c = ker[(size_t)v * k1 + i];
+
+            if (!c)
+                continue;
+
+            printf("%s", first ? " " : " + ");
+            first = 0;
+
+            int ex = A->ex[i];
+            int ey = A->ey[i];
+            int wrote = 0;
+
+            if (c != 1) {
+                printf("a^%d", logt[c]);
+                wrote = 1;
+            }
+
+            if (ex) {
+                printf("%sx", wrote ? "*" : "");
+                if (ex > 1)
+                    printf("^%d", ex);
+                wrote = 1;
+            }
+
+            if (ey) {
+                printf("%sy", wrote ? "*" : "");
+                if (ey > 1)
+                    printf("^%d", ey);
+                wrote = 1;
+            }
+
+            if (!wrote)
+                printf("1");
+        }
+
+        if (first)
+            printf(" 0");
+
+        printf("\n");
+    }
+}
+
+
+/*
+ * 誤り位置関数の零点を検査する。
+ *  - 各 L_v が零になる点の数
+ *  - 全 L_v の共通零点 (= 誤り位置の候補)
+ *  - g_injected があれば、注入した誤り位置がすべて
+ *    共通零点に含まれるかを判定する
+ */
+static void check_locator_zeros(
+    const EvalBasis *A,
+    const GF *ker,
+    int dim)
+{
+    int k1 = A->count;
+    int common = 0;
+    int missed = 0;
+    int injected_n = 0;
+
+    for (int v = 0; v < dim; ++v) {
+        int zeros = 0;
+
+        for (int p = 0; p < nD; ++p) {
+            GF z = 0;
+
+            for (int i = 0; i < k1; ++i) {
+                z ^= gf_mul(
+                    ker[(size_t)v * k1 + i],
+                    A->v[(size_t)i * nD + p]);
+            }
+
+            if (!z)
+                ++zeros;
+        }
+
+        printf("  L%d: zeros at %d of %d points\n",
+               v + 1, zeros, nD);
+    }
+
+    printf("  common zeros:");
+
+    for (int p = 0; p < nD; ++p) {
+        int allzero = 1;
+
+        for (int v = 0; v < dim && allzero; ++v) {
+            GF z = 0;
+
+            for (int i = 0; i < k1; ++i) {
+                z ^= gf_mul(
+                    ker[(size_t)v * k1 + i],
+                    A->v[(size_t)i * nD + p]);
+            }
+
+            if (z)
+                allzero = 0;
+        }
+
+        if (allzero) {
+            ++common;
+
+            if (common <= 64)
+                printf(" %d", p);
+        }
+    }
+
+    if (common > 64)
+        printf(" ... (%d in total)", common);
+    else
+        printf(" (%d in total)", common);
+
+    printf("\n");
+
+    if (g_injected) {
+        for (int p = 0; p < nD; ++p) {
+            if (!g_injected[p])
+                continue;
+
+            ++injected_n;
+
+            int allzero = 1;
+
+            for (int v = 0; v < dim && allzero; ++v) {
+                GF z = 0;
+
+                for (int i = 0; i < k1; ++i) {
+                    z ^= gf_mul(
+                        ker[(size_t)v * k1 + i],
+                        A->v[(size_t)i * nD + p]);
+                }
+
+                if (z)
+                    allzero = 0;
+            }
+
+            if (!allzero) {
+                ++missed;
+                printf("  NG: injected position %d "
+                       "is NOT a common zero\n", p);
+            }
+        }
+
+        printf("  check: %d of %d injected positions "
+               "are common zeros -> %s\n",
+               injected_n - missed, injected_n,
+               missed ? "NG" : "OK");
+    }
+}
+
 /* ============================================================
  * Decoder
  * ============================================================ */
@@ -1420,7 +1599,10 @@ static int decode(
                 "kernel dim=%d (A.count=%d)\n",
                 dim, k1);
     }
-
+    if (g_show_poly){
+        print_locator_polys(A, ker, dim);
+        check_locator_zeros(A, ker, dim);
+    }
     if (!ker || dim == 0) {
         free(ker);
         return 0;
@@ -1605,8 +1787,8 @@ static double now(void)
 
 int main(int argc, char **argv)
 {
-    int da = 2;
-    int db = 2;
+    int da = 40;
+    int db = 40;
     int errors = 1;
     int trials = 1;
     int seed = 1;
@@ -1670,7 +1852,10 @@ int main(int argc, char **argv)
             g_full = 1;
             continue;
         }
-
+        else if (!strcmp(argv[i], "--poly")) {
+            g_show_poly = 1;
+            continue;
+        }
         else if (!strcmp(argv[i], "--auto")) {
             auto_mode = 1;
             continue;
@@ -1713,6 +1898,7 @@ int main(int argc, char **argv)
                 "  --seed N\n"
                 "  --auto [--margin N]\n"
                 "  --full\n"
+                "  --poly\n"
                 "  --verbose\n\n"
                 "Curves:",
                 argv[0], argv[0]);
