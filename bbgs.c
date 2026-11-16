@@ -136,7 +136,7 @@ static int generate_bbgs_curve(
     if (c >= BBGS_MAX_TERMS)
         return 0;
 
-    uint64_t qpower;
+    uint64_t qpower;  // degree of bbgs curve
 
     if (!pow_u64(q, c-1, &qpower))
         return 0;
@@ -397,7 +397,7 @@ static int make_bbgs_curve(
     unsigned int c = a + b;
     uint64_t qpower;
 
-    if (!pow_u64(q, c, &qpower))
+    if (!pow_u64(q, c, &qpower)) // field_size
         return 0;
 
     if (qpower > MAXQ)
