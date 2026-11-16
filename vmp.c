@@ -1702,9 +1702,9 @@ int main(void)
 
     // s=define_curve();
 
-    s = bbgs_curve(2);
+    //s = bbgs_curve(2);
     // s = set_curve (he, 3);
-    //s = set_curve(gg, 7);
+    s = set_curve(gg, 7);
 
     u = mtrace(s);
     //  v=u;
