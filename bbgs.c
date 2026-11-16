@@ -138,7 +138,7 @@ static int generate_bbgs_curve(
 
     uint64_t qpower;
 
-    if (!pow_u64(q, c - 1, &qpower))
+    if (!pow_u64(q, c-1, &qpower))
         return 0;
 
     if (qpower > USHRT_MAX)
@@ -364,7 +364,7 @@ static const CurveDef *find_curve(const char *name)
  * BBGS生成結果を CurveDef に接続する。
  *
  * q は基礎体の位数。
- * Q = q^(a+b-1) が実際の有限体の位数。
+ * Q = q^(a+b) が実際の有限体の位数。
  *
  * 現在の有限体演算は標数2なので q=2^r に限定。
  * Q <= 256 に限定。
@@ -1772,7 +1772,7 @@ int main(int argc, char **argv)
                     "Requirements:\n"
                     "  q must be a power of 2\n"
                     "  gcd(a,b) must be 1\n"
-                    "  Q=q^(a+b-1) must be <= 256\n"
+                    "  Q=q^(a+b) must be <= 256\n"
                     "  a,b must be positive\n");
 
             return 2;
@@ -1871,7 +1871,7 @@ int main(int argc, char **argv)
         unsigned int c = ba + bb;
         uint64_t qpower = 0;
 
-        pow_u64(bq, c - 1, &qpower);
+        pow_u64(bq, c, &qpower);
 
         printf("BBGS parameters:\n");
         printf("q = %u\n", bq);
