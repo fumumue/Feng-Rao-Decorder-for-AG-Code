@@ -16,6 +16,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "mkbase2.h"
+
 #define MAXN 1024
 #define MAXMON 256
 
