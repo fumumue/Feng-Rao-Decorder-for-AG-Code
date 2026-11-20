@@ -25,6 +25,9 @@ static unsigned gpoly = 0x89;
 static int g_verbose = 0;
 static int g_full = 0;
 
+static int g_w2 = 0, g_pole = -1;
+
+
 /* ============================================================
  * Curves
  * ============================================================ */
@@ -557,6 +560,8 @@ static int build_monomial_basis(int degree, int xm, EvalBasis *out)
 #define MK_MAXDEG 100
 #define MK_BBCAP ((MK_XMAX + 1) * (MK_MAXDEG + 1))
 
+#include "mkbase2.h"
+
 static int mkbase(int bb[][2])
 {
     int count = 0;
@@ -594,22 +599,24 @@ static int mk_count(int degree)
     return n;
 }
 
-static int basis_count(int degree)
-{
-    return g_full ? (degree + 1) * (degree + 2) / 2
-                  : mk_count(degree);
-}
 
-static int build_ab_basis(int degree, EvalBasis *out)
-{
-    return g_full ? build_monomial_basis(degree, degree, out)
-                  : build_mk_basis(degree, out);
-}
+static int basis_count(int d)
+{ return g_w2 ? mk2_count(d) : (g_full ? (d+1)*(d+2)/2 : mk_count(d)); }
 
-static int basis_xmax(int degree)
-{
-    return g_full ? degree : (MK_XMAX < degree ? MK_XMAX : degree);
-}
+static int build_ab_basis(int d, EvalBasis *o)
+{ return g_w2 ? build_mk2_basis(d, 1, o)
+              : (g_full ? build_monomial_basis(d, d, o) : build_mk_basis(d, o)); }
+
+static int basis_xmax(int d)
+{ return g_w2 ? d : (g_full ? d : (MK_XMAX < d ? MK_XMAX : d)); }
+
+static int build_h_basis(int da, int db, int xa, int xb, EvalBasis *o)
+{ return g_w2 ? build_mk2_basis(da + db, 2, o)
+              : build_monomial_basis(da + db, xa + xb, o); }
+
+static int max_deg(void) { return g_w2 ? MK2_MAXW : MK_MAXDEG; }
+
+
 
 /* ============================================================
  * Random generator
@@ -1019,7 +1026,13 @@ int main(int argc, char **argv)
         } else if (!strcmp(argv[i], "--auto")) {
             auto_mode = 1;
             continue;
-        } else if (!strcmp(argv[i], "--margin")) dst = &margin;
+        } else if (!strcmp(argv[i], "--w2")) { 
+            g_w2 = 1;  
+            continue;
+        }
+        else if (!strcmp(argv[i], "--pole")) dst = &g_pole;
+
+        else if (!strcmp(argv[i], "--margin")) dst = &margin;
         else if (!strcmp(argv[i], "--m")) dst = &hm;
         else if (!strcmp(argv[i], "--da")) dst = &da;
         else if (!strcmp(argv[i], "--db")) dst = &db;
@@ -1047,7 +1060,7 @@ int main(int argc, char **argv)
         }
     }
 
-    if (da > MK_MAXDEG || db > MK_MAXDEG ||
+    if (da > max_deg() || db > max_deg() ||
         errors < 0 || trials < 1) {
         fprintf(stderr, "Invalid parameters (da, db <= %d).\n",
                 MK_MAXDEG);
@@ -1060,7 +1073,11 @@ int main(int argc, char **argv)
         return 2;
     }
     cur_local = *c;
-
+    if (g_w2 && !mk2_init(g_pole)) {
+    fprintf(stderr, "mkbase2: この曲線には一点基底がありません\n");
+    return 1;
+    }
+    
     if (!strcmp(cname, "he")) {
         static const unsigned P[9] =
             {0,0,0x07,0x0B,0x13,0x25,0x43,0x89,0x11D};
@@ -1083,7 +1100,10 @@ int main(int argc, char **argv)
     }
 
     curve = &cur_local;
-
+    if (g_w2 && !mk2_init(g_pole)) {
+        fprintf(stderr, "mkbase2: この曲線には一点基底がありません\n");
+        return 1;
+    }
     if (!gf_init(curve->m, curve->poly)) {
         fprintf(stderr, "GF(2^%d) init failed for polynomial 0x%X\n",
                 curve->m, curve->poly);
@@ -1092,7 +1112,8 @@ int main(int argc, char **argv)
 
     double t0 = now();
     nD = enumerate_points();
-
+    if (g_w2) nD = mk2_filter_points();
+    
     if (nD <= 0) {
         fprintf(stderr, "Point enumeration failed\n");
         return 1;
@@ -1119,7 +1140,7 @@ int main(int argc, char **argv)
     if (auto_mode) {
         da = db = -1;
 
-        for (int d = 0; d <= MK_MAXDEG; ++d) {
+        for (int d = 0; d <= max_deg(); ++d) {
             if (da < 0 && basis_count(d) >= need_a) da = d;
             if (db < 0 && basis_count(d) >= need_b) db = d;
         }
@@ -1128,8 +1149,8 @@ int main(int argc, char **argv)
             fprintf(stderr,
                     "errors=%d (margin %d) is too large: "
                     "A.count is at most %d for da <= %d\n",
-                    errors, margin, basis_count(MK_MAXDEG),
-                    MK_MAXDEG);
+                    errors, margin, basis_count(max_deg()),
+                    max_deg());
             free(D);
             return 2;
         }
@@ -1147,10 +1168,11 @@ int main(int argc, char **argv)
 
         xa = basis_xmax(da);
         xb = basis_xmax(db);
-
+        
+        if (g_w2) mk2_set_shift(da, db);
         if (!build_ab_basis(da, &A) ||
             !build_ab_basis(db, &B) ||
-            !build_monomial_basis(da + db, xa + xb, &H)) {
+            !build_h_basis(da , db, xa , xb, &H)) {
             fprintf(stderr, "Basis construction failed.\n");
             free_basis(&A);
             free_basis(&B);
@@ -1169,9 +1191,9 @@ int main(int argc, char **argv)
         if (short_a) ++da;
         if (short_b) ++db;
 
-        if (da > MK_MAXDEG || db > MK_MAXDEG) {
+        if (da > max_deg() || db > max_deg()) {
             fprintf(stderr, "auto: da/db would exceed %d\n",
-                    MK_MAXDEG);
+                    max_deg());
             free_basis(&A);
             free_basis(&B);
             free_basis(&H);
