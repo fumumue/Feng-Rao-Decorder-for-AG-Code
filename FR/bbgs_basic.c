@@ -16,8 +16,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "mkbase2.h"
-
 #define MAXN 1024
 #define MAXMON 256
 
@@ -296,7 +294,7 @@ static void usage(const char *p) {
     puts("u,v are total-degree bounds for the two sides of the syndrome matrix.");
 }
 int main(int argc,char **argv) {
-    int m=2,u=4,v=4,errors=10,seed=1,trials=1;
+    int m=2,u=49,v=47,errors=145,seed=1,trials=1;
     for(int i=1;i<argc;i++){
         if(!strcmp(argv[i],"--help")||!strcmp(argv[i],"-h")){usage(argv[0]);return 0;}
         if(i+1>=argc){fprintf(stderr,"missing value for %s\n",argv[i]);return 2;}

@@ -1386,7 +1386,7 @@ int main(int argc, char **argv)
     /* ---- simulate a channel: received word = error vector (c = 0) ---- */
     static uint16_t r[MAX_POINTS];
 
-    srand(seed);
+    srand(clock());
     for (int e = 0; e < NUM_ERRORS; ++e) {
         uint32_t p;
         int dup;
@@ -1451,7 +1451,8 @@ int main(int argc, char **argv)
     if (run_bms && run_vote && !res_bms.failed && !res_vote.failed)
         printf("# whole decoder, VOTE / BMS time ratio: %.1f x\n",
                total_time(&res_vote) / total_time(&res_bms));
-
+        exit(1);
+        
     {
         static Entry orig[MAX_POINTS], dec[MAXT + 1];
         const Result *R = run_vote ? &res_vote : run_bms ? &res_bms : &res_fr;
