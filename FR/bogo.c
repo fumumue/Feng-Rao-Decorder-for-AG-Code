@@ -1,21 +1,26 @@
 /*
- * bbgs_toric.c -- BBGS curve  X^(q^2) + Y + X^(q^2-1) Y^q + X^(q^2-q) Y^(q^2) = 0  over GF(2^m):
- *   function-space basis from the Newton polygon (NO local expansions, NO linear algebra, NO solve_L)
- *   + syndromes from error positions/values without any parity-check matrix
- *   + syndromes -> error vector (basic Feng-Rao / Pellikaan kernel algorithm)
+ * bbgs_toric.c -- GF(2^m) 上の BBGS 曲線
+ *   X^(q^2) + Y + X^(q^2-1)Y^q + X^(q^2-q)Y^(q^2) = 0
  *
- * Idea.  The Newton polygon of F is the triangle (0,1),(q^2,0),(q^2-q,q^2).  Its three edges give the places
- *   E0 : the origin (x=y=0),             v(x^i y^j) = i + q^2 j
- *   E1 : places at infinity (degree q),  v(x^i y^j) = -q i - j
- *   E2 : q-1 rational places at infinity, v(x^i y^j) = (q+1) i - q j
- * For the divisor G = a*(places of E1) + b*(places of E2) every Laurent monomial x^i y^j with
- *   q i + j <= a ,  q j - (q+1) i <= b ,  i + q^2 j >= 0                       (lattice polygon  Delta(a,b))
- * lies in L(G).  Modulo the multiples of F the monomials of Delta(a,b) are independent; a basis is
- *   { (i,j) in Delta(a,b) :  (i,j) - (q^2,0)  is NOT in  H(a,b) },   H = { h : h + Newton(F) inside Delta }.
- * Its size equals deg G - g + 1 (Riemann-Roch) -- checked at run time -- so it is a complete basis of L(G).
+ * 機能:
+ *   ・Newton 多角形から関数空間の基底を構成する（局所展開・連立一次方程式・solve_L は使わない）
+ *   ・パリティ検査行列を作らず、誤り位置と誤り値からシンドロームを計算する
+ *   ・基本 Feng-Rao / Pellikaan の核アルゴリズムでシンドロームから誤りベクトルを復元する
  *
- * Build: cc -O2 -std=gnu11 -o bbgs_toric bbgs_toric.c
- * Run  : ./bbgs_toric [--m 9] [--q 8] [--errors 256] [--len 8192] [--a A --b B] [--seed s] [--mem MB] [--quiet]
+ * F の Newton 多角形は (0,1), (q^2,0), (q^2-q,q^2) を頂点とする三角形である。
+ * その3辺に対応する場所は次のとおり。
+ *   E0: 原点 (x=y=0)                 v(x^i y^j) = i + q^2 j
+ *   E1: 無限遠の場所（次数 q）       v(x^i y^j) = -q i - j
+ *   E2: 無限遠の q-1 個の有理点      v(x^i y^j) = (q+1)i - qj
+ *
+ * G = a*(E1 の場所) + b*(E2 の場所) とする。
+ *   qi+j <= a, qj-(q+1)i <= b, i+q^2j >= 0
+ * を満たす Laurent 単項式 x^i y^j が Delta(a,b) に属する。
+ * F の倍数を法として、Delta(a,b) の単項式から独立な基底を選ぶ。
+ * 基底の個数は deg(G)-g+1 と一致する（Riemann-Roch による完全性を実行時に確認）。
+ *
+ * ビルド: cc -O2 -std=gnu11 -o bbgs_toric bbgs_toric.c
+ * 実行  : ./bbgs_toric [--m 9] [--q 8] [--errors 256] [--len 8192] [--a A --b B] [--seed s] [--mem MB] [--force] [--quiet]
  */
 #define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
@@ -26,7 +31,7 @@
 #include <unistd.h>
 typedef uint16_t fe;
 
-/* ---------------- GF(2^m), m <= 11 ---------------- */
+/* ---------------- GF(2^m) の演算（m <= 11） ---------------- */
 static int FM, FS, FO;
 static fe *gexp, *glog;
 static int gf_init(int m, unsigned poly) {
@@ -54,14 +59,14 @@ static inline fe mul(fe a, fe b) {
 static inline fe inv(fe a) {
     return gexp[FO-glog[a]];
 }
-/* x^i y^j for a point given by logs (lx,ly) -- i,j may be negative */
+/* 対数 (lx,ly) で表した点における x^i y^j の値。i,j は負でもよい */
 static inline fe monval(int lx, int ly, int i, int j) {
     long long e=((long long)i*lx+(long long)j*ly)%FO;
     if(e<0) e+=FO;
     return gexp[e];
 }
 static double mem_mb_opt=0;
-static int dump_all=1; /* show diagnostic vectors, syndromes and bases by default */
+static int dump_all=1; /* 既定では診断用のベクトル・シンドローム・基底を表示する */
 static double mem_limit_bytes(void) {
     if(mem_mb_opt>0) return mem_mb_opt*1048576.0;
     double avail=0;
@@ -103,9 +108,9 @@ static uint64_t rnd(void) {
     return rs;
 }
 
-/* ---------------- Newton polygon basis ---------------- */
+/* ---------------- Newton 多角形による基底構成 ---------------- */
 static int Q, QQ;
-/* q, q^2 */
+/* q と q^2 */
 static int fdiv_(int a, int b) {
     int d=a/b;
     if((a%b!=0)&&((a<0)!=(b<0))) d--;
@@ -114,7 +119,7 @@ static int fdiv_(int a, int b) {
 static int cdiv_(int a, int b) {
     return -fdiv_(-a, b);
 }
-/* j-range of column i of the polygon  { q i + j <= A1,  q j - (q+1) i <= A2,  i + q^2 j >= A0 } */
+/* 多角形 {qi+j<=A1, qj-(q+1)i<=A2, i+q^2j>=A0} における列 i の j の範囲 */
 static int jrange(int A1, int A2, int A0, int i, int *lo, int *hi) {
     *lo=cdiv_(A0-i, QQ);
     int h1=A1-Q*i, h2=fdiv_(A2+(Q+1)*i, Q);
@@ -128,7 +133,7 @@ typedef struct {
     int imin, imax, jmin, jmax;
 }
 Poly;
-/* is h = (hi,hj) in H(a,b):  h + Newton(F) inside Delta(a,b) */
+/* h=(hi,hj) が H(a,b) に属するか。すなわち h+Newton(F) が Delta(a,b) に含まれるか */
 static int inH(int a, int b, int hi, int hj) {
     return Q*hi+hj <= a-Q*QQ && Q*hj-(Q+1)*hi <= b-Q && hi+QQ*hj >= -QQ;
 }
@@ -171,13 +176,8 @@ static void poly_build(Poly *P, int a, int b) {
     P->nind=0;
     for(int k=0; k<P->n; k++) P->nind+=P->ind[k];
 }
-static void poly_free(Poly*P) {
-    free(P->pi);
-    free(P->pj);
-    free(P->ind);
-}
 
-/* ---------------- points of the curve (origin excluded: x,y != 0) ---------------- */
+/* ---------------- 曲線上の点（原点を除外し、x,y はともに非零） ---------------- */
 static int npts;
 static fe *PX, *PY;
 static int *LX, *LY;
@@ -216,7 +216,7 @@ done:
     }
 }
 
-/* ---------------- syndrome table on Delta(G) (dense box, indexed by (i,j)) ---------------- */
+/* ---------------- Delta(G) 上のシンドローム表（(i,j) で添字付けした密な配列） ---------------- */
 typedef struct {
     Poly *G;
     int W;
@@ -226,7 +226,7 @@ Tab;
 static inline fe *Tp(const Tab*S, int i, int j) {
     return &S->T[(size_t)(i-S->G->imin)*S->W+(j-S->G->jmin)];
 }
-/* all lattice points of Delta(G):  T(i,j) = sum_k e_k x_k^i y_k^j       (no parity-check matrix) */
+/* Delta(G) の全格子点について T(i,j)=Σ_k e_k x_k^i y_k^j を計算する（検査行列は使わない） */
 static void syndrome_table(const Tab*S, const int*pos, const fe*val, int t) {
     memset(S->T, 0, sizeof(fe)*(size_t)(S->G->imax-S->G->imin+1)*S->W);
     for(int u=0; u<t; u++) {
@@ -240,7 +240,7 @@ static void syndrome_table(const Tab*S, const int*pos, const fe*val, int t) {
         }
     }
 }
-/* the dependent entries from the independent ones:  F * x^h = 0   (all coefficients 1)  */
+/* 独立成分から従属成分を復元する。F*x^h=0（この曲線式の係数はすべて1） */
 static void syndrome_extend(const Tab*S) {
     const int vi[3] = {0, QQ - 1, QQ - Q};
     const int vj[3] = {1, Q, QQ};
@@ -252,7 +252,7 @@ static void syndrome_extend(const Tab*S) {
     }
 }
 
-/* ---------------- linear algebra ---------------- */
+/* ---------------- 線形代数 ---------------- */
 static int nullspace(fe *A, int R, int C, fe **out) {
     int *pc=malloc(sizeof(int)*(C+1)), rk=0, *lr=malloc(sizeof(int)*C);
     for(int c=0; c<C&&rk<R; c++) {
@@ -296,7 +296,7 @@ static int nullspace(fe *A, int R, int C, fe **out) {
     *out=B;
     return kd;
 }
-/* error values on the candidate set Z: sum_z e_z x_z^i y_z^j = T(i,j) for all independent (i,j) of Delta(G) */
+/* 候補点集合 Z 上の誤り値を求める。Delta(G) の独立な全 (i,j) で Σ_z e_z x_z^i y_z^j=T(i,j) を解く */
 static int values_from_syndrome(const Tab*S, const int*Z, int nz, int*pos, fe*val) {
     if(nz==0) return 0;
     Poly*G=S->G;
@@ -355,7 +355,7 @@ static int values_from_syndrome(const Tab*S, const int*Z, int nz, int*pos, fe*va
     return cnt;
 }
 
-/* ---------------- human-readable diagnostic output ---------------- */
+/* ---------------- 診断情報の表示 ---------------- */
 static void print_poly_basis(const char *name, const Poly *P) {
     printf("\n%s: %d independent monomials\n", name, P->nind);
     for (int k = 0; k < P->n; k++) {
@@ -368,12 +368,88 @@ static void print_syndromes(const Tab *S) {
         printf("  (%d,%d)%s : 0x%03x\n", S->G->pi[p], S->G->pj[p], S->G->ind[p] ? " *" : "  ", (unsigned)*Tp(S, S->G->pi[p], S->G->pj[p]));
     }
 }
-static void print_error_vector(const char *name, const int *pos, const fe *val, int n) {
-    printf("\n%s: weight=%d\n", name, n);
-    for (int i = 0; i < n; i++) {
-        int k = pos[i];
-        printf("  point-index=%d  (x,y)=(0x%03x,0x%03x)  e=0x%03x\n", k, (unsigned)PX[k], (unsigned)PY[k], (unsigned)val[i]);
+typedef struct {
+    int pos;
+    fe val;
+} ErrorEntry;
+
+static int compare_error_entry(const void *a, const void *b) {
+    const ErrorEntry *x = a;
+    const ErrorEntry *y = b;
+    return (x->pos > y->pos) - (x->pos < y->pos);
+}
+
+static int has_duplicate_positions(const int *pos, int n) {
+    for (int i = 0; i < n; i++)
+        for (int j = i + 1; j < n; j++)
+            if (pos[i] == pos[j]) return 1;
+    return 0;
+}
+
+static void print_error_comparison(const int *before_pos, const fe *before_val, int before_n,
+                                  const int *after_pos, const fe *after_val, int after_n) {
+    int total = before_n + after_n;
+    ErrorEntry *entry = malloc(sizeof(*entry) * (size_t)total);
+    if (!entry && total > 0) {
+        fprintf(stderr, "cannot allocate memory to sort error comparison\n");
+        return;
     }
+
+    for (int i = 0; i < before_n; i++) {
+        entry[i].pos = before_pos[i];
+        entry[i].val = before_val[i];
+    }
+    for (int i = 0; i < after_n; i++) {
+        entry[before_n + i].pos = after_pos[i];
+        entry[before_n + i].val = after_val[i];
+    }
+    qsort(entry, (size_t)total, sizeof(*entry), compare_error_entry);
+
+    printf("\nERROR VECTOR COMPARISON (sorted by point-index)\n");
+    printf("  %5s | %5s | %5s %5s | %10s | %10s | %s\n",
+           "No.", "index", "x", "y", "before", "after", "result");
+    printf("  ------+-------+-------------+------------+------------+---------\n");
+
+    int row = 0;
+    for (int i = 0; i < total; ) {
+        int k = entry[i].pos;
+        fe before = 0, after = 0;
+        int has_before = 0, has_after = 0;
+
+        while (i < total && entry[i].pos == k) i++;
+        for (int j = 0; j < before_n; j++) {
+            if (before_pos[j] == k) {
+                before = before_val[j];
+                has_before = 1;
+                break;
+            }
+        }
+        for (int j = 0; j < after_n; j++) {
+            if (after_pos[j] == k) {
+                after = after_val[j];
+                has_after = 1;
+                break;
+            }
+        }
+
+        char before_text[16], after_text[16];
+        if (has_before) snprintf(before_text, sizeof(before_text), "0x%03x", (unsigned)before);
+        else snprintf(before_text, sizeof(before_text), "-");
+        if (has_after) snprintf(after_text, sizeof(after_text), "0x%03x", (unsigned)after);
+        else snprintf(after_text, sizeof(after_text), "-");
+
+        const char *result = has_before && has_after && before == after ? "MATCH" :
+                             has_before && has_after ? "DIFF" : "MISSING";
+        row++;
+        printf("  %5d | %5d | 0x%03x 0x%03x | %10s | %10s | %s\n",
+               row, k, (unsigned)PX[k], (unsigned)PY[k],
+               before_text, after_text, result);
+    }
+    printf("  rows=%d, before=%d errors, after=%d errors\n", row, before_n, after_n);
+    printf("  duplicate positions: before=%s, after=%s\n",
+           has_duplicate_positions(before_pos, before_n) ? "YES" : "no",
+           has_duplicate_positions(after_pos, after_n) ? "YES" : "no");
+    free(entry);
 }
 static void print_locator_basis(const fe *ker, int kd, int na, const int *ai, const int *aj) {
     printf("\nERROR-LOCATION POLYNOMIAL BASIS: %d common-zero equations\n", kd);
@@ -392,7 +468,7 @@ static void print_locator_basis(const fe *ker, int kd, int na, const int *ai, co
     }
     printf("  Error positions are the common zeros of all listed L_v on the enumerated curve points.\n");
 }
-/* syndromes -> errors.  F,H polygons with G = F+H.  info: 0=dimL(F) 1=dimL(H) 2=kernel dim 3=common zeros */
+/* シンドロームから誤りを復元する。G=F+H。info: 0=dimL(F), 1=dimL(H), 2=核の次元, 3=共通零点数 */
 static int error_from_syndrome(const Tab*S, Poly*F, Poly*H, int*pos, fe*val, int*info) {
     int na=F->nind, nb=H->nind;
     if(!mem_check("locator matrix", (double)na*nb*sizeof(fe))) return -1;
@@ -433,6 +509,17 @@ static int error_from_syndrome(const Tab*S, Poly*F, Poly*H, int*pos, fe*val, int
     info[2]=kd;
     info[3]=nz;
     if (dump_all) print_locator_basis(ker, kd, na, ai, aj);
+    if(kd==0) {
+        fprintf(stderr, "位置多項式の核が零次元です。全 %d 点が共通零点となり、誤り位置を絞り込めません。\n", nz);
+        free(ker);
+        free(mv);
+        free(ai);
+        free(aj);
+        free(bi);
+        free(bj);
+        free(Z);
+        return -1;
+    }
     free(ker);
     free(mv);
     free(ai);
@@ -445,6 +532,7 @@ static int error_from_syndrome(const Tab*S, Poly*F, Poly*H, int*pos, fe*val, int
 }
 int main(int argc, char**argv) {
     int m=9, q=8, t=256, len=8192, a_req=-1, b_req=-1;
+    int force=0;
     unsigned seed=1;
     for(int i=1; i<argc; i++) {
         if(!strcmp(argv[i], "--m")&&i+1<argc) m=atoi(argv[++i]);
@@ -455,6 +543,7 @@ int main(int argc, char**argv) {
         else if(!strcmp(argv[i], "--b")&&i+1<argc) b_req=atoi(argv[++i]);
         else if(!strcmp(argv[i], "--seed")&&i+1<argc) seed=(unsigned)atoi(argv[++i]);
         else if(!strcmp(argv[i], "--mem")&&i+1<argc) mem_mb_opt=atof(argv[++i]);
+        else if(!strcmp(argv[i], "--force")) force=1;
         else if(!strcmp(argv[i], "--dump")) dump_all=1;
         else if(!strcmp(argv[i], "--quiet")) dump_all=0;
         else {
@@ -474,29 +563,51 @@ int main(int argc, char**argv) {
     QQ=q*q;
     rs^=(uint64_t)seed*0x9E3779B97F4A7C15ULL;
     for(int i=0; i<8; i++) rnd();
-    int g=(q*q*q*q-3*q+2)/2, dmin=2*t+3*g-1;
-    int a=a_req>0?a_req:(dmin+2*q-2)/(2*q-1), b=b_req>0?b_req:a;
+    int g=(q*q*q*q-3*q+2)/2;
+    int basic_deg_sufficient=2*t+3*g-1;
+    int a=a_req>0?a_req:(basic_deg_sufficient+2*q-2)/(2*q-1), b=b_req>0?b_req:a;
     int aH=(t+2*g-1+2*q-2)/(2*q-1), bH=aH, aF=a-aH, bF=b-bH;
-    /* H as small as the basic algorithm allows, F = G - H */
+    /* 基本アルゴリズムの条件を満たす範囲で H を小さくし、F=G-H とする */
     double t0=now();
     Poly G, F, H;
     poly_build(&G, a, b);
     poly_build(&F, aF, bF);
     poly_build(&H, aH, bH);
     int degG=q*a+(q-1)*b, degF=q*aF+(q-1)*bF, degH=q*aH+(q-1)*bH;
-    printf("BBGS q=%d over GF(2^%d): g=%d, errors t=%d\n", q, m, g, t);
-    printf("divisor G=(a=%d on E1, b=%d on E2): deg G=%d (need >= 2t+3g-1=%d), F: deg %d, H: deg %d\n", a, b, degG, dmin, degF, degH);
-    printf("basis from the Newton polygon (%.3f s): dim L(G)=%d [RR %d], dim V_F=%d [RR %d, >= is fine], dim L(H)=%d [RR %d]  lattice points of Delta(G): %d\n", now()-t0, G.nind, degG-g+1, F.nind, degF-g+1, H.nind, degH-g+1, G.n);
-    /* G and H must be COMPLETE (dim = deg - g + 1, certified by Riemann-Roch since deg >= 2g-1);
-           F only needs dim > t: its kernel functions vanish on the error positions whatever F is */
-    if(G.nind!=degG-g+1||H.nind!=degH-g+1||degH<2*g-1) printf("WARNING: L(G) or L(H) is not certified complete by Riemann-Roch\n");
-    if(F.nind<=t||degH<t+2*g-1||degG<dmin) {
-        fprintf(stderr, "degrees too small for the basic algorithm (dim V_F=%d, need > t)\n", F.nind);
-        return 1;
+    printf("BBGS 曲線: q=%d, GF(2^%d), genus g=%d, 誤り数 t=%d\n", q, m, g, t);
+    printf("除数 G=(E1 上の a=%d, E2 上の b=%d): deg G=%d（基本法の十分条件 2t+3g-1=%d）, deg F=%d, deg H=%d\n", a, b, degG, basic_deg_sufficient, degF, degH);
+    int d_design=degG-2*g+2;
+    int t_design=(d_design>0)?(d_design-1)/2:0;
+    int t_divisor=(degG-3*g+1)/2;
+    printf("双対 AG 符号の設計最小距離の下界: d >= deg G - 2g + 2 = %d; 保証される一意復号半径 >= %d\n", d_design, t_design);
+    printf("G を固定した場合に基本法の十分条件が保証する誤り数: t <= floor((deg G - 3g + 1)/2) = %d\n", t_divisor);
+    printf("Newton 多角形の基底構成 (%.3f s): dim L(G)=%d [RR=%d], dim V_F=%d [RR=%d], dim L(H)=%d [RR=%d], Delta(G) の格子点数=%d\n", now()-t0, G.nind, degG-g+1, F.nind, degF-g+1, H.nind, degH-g+1, G.n);
+    /* G と H は完全な空間でなければならない（deg>=2g-1 なら Riemann-Roch により dim=deg-g+1）。
+       F は dim(F)>t であればよい。F の核に属する関数は誤り位置で消える。 */
+    if(G.nind!=degG-g+1||H.nind!=degH-g+1||degH<2*g-1)
+        printf("WARNING: L(G) または L(H) の完全性を Riemann-Roch で確認できません\n");
+    if(F.nind<=t || degH<t+2*g-1 || degG<basic_deg_sufficient) {
+        fprintf(stderr, "基本アルゴリズムの十分条件を満たしていません: ");
+        if(degG<basic_deg_sufficient)
+            fprintf(stderr, "deg G=%d < 2t+3g-1=%d（固定した G の次数条件）; ", degG, basic_deg_sufficient);
+        if(F.nind<=t)
+            fprintf(stderr, "dim V_F=%d <= t=%d; ", F.nind, t);
+        if(degH<t+2*g-1)
+            fprintf(stderr, "deg H=%d < t+2g-1=%d; ", degH, t+2*g-1);
+        fprintf(stderr, "\n");
+        if(!force) {
+            fprintf(stderr, "復号は実行しません。条件を無視して実験する場合だけ --force を指定してください。\n");
+            return 1;
+        }
+        fprintf(stderr, "警告: --force により条件を無視して復号処理を試します。\n");
     }
     t0=now();
     enumerate_points(len);
-    printf("curve points used as code positions (origin excluded): n=%d  (%.2f s)\n", npts, now()-t0);
+    printf("符号位置として使用する曲線上の点（原点を除外）: n=%d (%.2f s)\n", npts, now()-t0);
+    if(t<0 || t>npts) {
+        fprintf(stderr, "誤り数 t=%d は使用可能な点数 n=%d の範囲外です\n", t, npts);
+        return 1;
+    }
     if (dump_all) {
         printf("\nCURVE: x^(%d) + y + x^(%d)*y^(%d) + x^(%d)*y^(%d) = 0 over GF(2^%d)\n", QQ, QQ - 1, Q, QQ - Q, QQ, m);
     }
@@ -524,7 +635,6 @@ int main(int argc, char**argv) {
         do tval[u]=rnd()%FS;
         while(!tval[u]);
     }
-    if (dump_all) print_error_vector("INPUT ERROR VECTOR", tpos, tval, t);
     t0=now();
     syndrome_table(&S, tpos, tval, t);
     double ts=now()-t0;
@@ -532,7 +642,7 @@ int main(int argc, char**argv) {
         print_poly_basis("BASIS OF L(G)", &G);
         print_syndromes(&S);
     }
-    /* give the decoder only the independent syndromes (dim L(G) of them) */
+    /* 復号器には独立なシンドローム成分（dim L(G) 個）だけを渡す */
     memset(D.T, 0, sizeof(fe)*tsz);
     for(int p=0; p<G.n; p++) if(G.ind[p]) *Tp(&D, G.pi[p], G.pj[p])=*Tp(&S, G.pi[p], G.pj[p]);
     int*pos=malloc(sizeof(int)*(npts+1));
@@ -545,15 +655,15 @@ int main(int argc, char**argv) {
     int cnt=error_from_syndrome(&D, &F, &H, pos, val, info);
     double td=now()-t0;
     int extok=!memcmp(S.T, D.T, sizeof(fe)*tsz);
-    int good=(cnt==t);
+    int good=(cnt==t) && !has_duplicate_positions(pos, cnt);
     for(int c=0; c<cnt&&good; c++) {
         int f=0;
         for(int u=0; u<t; u++) if(tpos[u]==pos[c]&&tval[u]==val[c]) f=1;
         if(!f) good=0;
     }
-    printf("syndrome from errors (no parity-check matrix): %.4f s, %d independent syndromes\n", ts, G.nind);
-    printf("dependent entries rebuilt from the independent ones == direct: %s\n", extok?"yes":"NO");
-    printf("decode: %.3f s, found %d errors (dimL(F)=%d dimL(H)=%d kernel=%d common zeros=%d)  ->  %s\n", td, cnt, info[0], info[1], info[2], info[3], good?"OK":"FAIL");
-    if (dump_all && cnt >= 0) print_error_vector("DECODED ERROR VECTOR", pos, val, cnt);
+    printf("誤りベクトルからのシンドローム計算（検査行列なし）: %.4f s, 独立成分 %d 個\n", ts, G.nind);
+    printf("独立成分から復元した従属成分と直接計算した値の一致: %s\n", extok?"はい":"いいえ");
+    printf("復号: %.3f 秒, 復元した誤り数=%d（核の次元=%d, 共通零点数=%d） -> %s\n", td, cnt, info[2], info[3], good?"成功":"失敗");
+    if (dump_all && cnt >= 0) print_error_comparison(tpos, tval, t, pos, val, cnt);
     return good?0:2;
 }
