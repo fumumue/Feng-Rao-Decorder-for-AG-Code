@@ -25,7 +25,7 @@
 
 typedef uint16_t fe;
 
-#define MAXB 1400     /* max number of basis functions (M+1)          */
+#define MAXB 6800     /* max number of basis functions (M+1)          */
 #define MAXT 420      /* max number of errors                         */
 #define MAXGEN 100    /* max generators of the ideal E                */
 #define MAXGENUS 6800 /* max genus handled by the voting part         */
@@ -1148,7 +1148,8 @@ static int newton_basis(int e, int Mx, NBas *out) {
   cb[nc] = ed[e].wy;
   ck[nc] = Mx;
   nc++;
-  int *ri = malloc(sizeof(int) * (Mx + 1)), *rj = malloc(sizeof(int) * (Mx + 1));
+  int *ri = malloc(sizeof(int) * (Mx + 1)),
+      *rj = malloc(sizeof(int) * (Mx + 1));
   char *have = calloc(Mx + 1, 1);
   int bad = 0;
   for (int dir = 0; dir < 2 && !bad; ++dir)
@@ -1205,8 +1206,8 @@ static int newton_basis(int e, int Mx, NBas *out) {
   int cnt = 0;
   for (int w = 0; w <= Mx; ++w)
     cnt += have[w];
-  int ok = !bad && have[0] && ri[0] == 0 && rj[0] == 0 &&
-           cnt == Mx + 1 - genus_g;
+  int ok =
+      !bad && have[0] && ri[0] == 0 && rj[0] == 0 && cnt == Mx + 1 - genus_g;
   int laurent = 0;
   if (ok)
     for (int w = 0; w <= Mx; ++w)
@@ -1250,8 +1251,9 @@ static fe mono_eval(fe x, fe y, int i, int j) {
     return 1;
   if ((i != 0 && !x) || (j != 0 && !y))
     return 0;
-  long long ex = ((long long)i * (x ? glog[x] : 0) +
-                  (long long)j * (y ? glog[y] : 0)) % FO;
+  long long ex =
+      ((long long)i * (x ? glog[x] : 0) + (long long)j * (y ? glog[y] : 0)) %
+      FO;
   if (ex < 0)
     ex += FO;
   return gexp[ex];
@@ -2264,7 +2266,8 @@ static int solve_values(const fe *VG, int rG, const fe *sigma, const int *Z,
 
 /* ---- what parameters does this build / this curve handle? ---- */
 static int limit_Mmax(int g, int n) {
-  int mm = n - g - 2; /* M+g <= n-2: injective evaluation, one point may be dropped */
+  int mm = n - g -
+           2; /* M+g <= n-2: injective evaluation, one point may be dropped */
   if (mm > MAXB - 2 - g)
     mm = MAXB - 2 - g; /* basis array */
   return mm;
@@ -2279,6 +2282,7 @@ static void print_limits(int g, int n, int t) {
     printf("#   NOT decodable here: needs M >= 2g = %d but M <= %d  (n must be "
            "> 3g+1 = %d and MAXB >= 3g+3)\n",
            2 * g, Mmax, 3 * g + 1);
+    exit(1);
     return;
   }
   int tb = (Mmax - 3 * g + 1) / 2, tv = (Mmax - 2 * g + 1) / 2;
@@ -2318,11 +2322,15 @@ static void usage(void) {
       "  --pole \"E2:140,E1:85\" or \"#3:100\"   multi-point divisor (E<k>: "
       "edge, #k: orbit)\n"
       "  -fr -bms -vote   one-point decoders to run (default: all)\n"
-      "  -strict          skip FR/BMS when t exceeds the basic bound tau (default: run them anyway)\n"
-      "  -limits          print the parameter limits of this build/curve and exit\n"
+      "  -strict          skip FR/BMS when t exceeds the basic bound tau "
+      "(default: run them anyway)\n"
+      "  -limits          print the parameter limits of this build/curve and "
+      "exit\n"
       "  -basic           (multi-point) basic algorithm\n"
-      "  -allplaces       one-point: also evaluate the slow (Laurent-expansion) places and keep the best d_FR\n"
-      "  -nonewton        one-point: build the basis by Laurent expansions (old, slow) instead of the Newton polygon\n"
+      "  -allplaces       one-point: also evaluate the slow "
+      "(Laurent-expansion) places and keep the best d_FR\n"
+      "  -nonewton        one-point: build the basis by Laurent expansions "
+      "(old, slow) instead of the Newton polygon\n"
       "  --place k        also avoids probing every candidate place (saves "
       "setup time)\n"
       "  -n N             N random trials (summary only)       -v  votes     "
@@ -2339,8 +2347,9 @@ int main(int argc, char **argv) {
   for (int i = 1; i < argc; ++i) {
     { /* accept --force / --fr / --bms / --vote / --basic / --list as well as
          -force ... */
-      static const char *flags[] = {"half",  "force", "fr", "bms", "vote",
-                                    "basic", "list",  "v",  "nonewton", "allplaces", "strict", "limits", NULL};
+      static const char *flags[] = {
+          "half", "force",    "fr",        "bms",    "vote",   "basic", "list",
+          "v",    "nonewton", "allplaces", "strict", "limits", NULL};
       if (argv[i][0] == '-' && argv[i][1] == '-')
         for (int f = 0; flags[f]; ++f)
           if (!strcmp(argv[i] + 2, flags[f])) {
@@ -2918,9 +2927,8 @@ int main(int argc, char **argv) {
              npts - k, k);
       npts = k;
       if (npts <= M_EXT) {
-        fprintf(stderr,
-                "# only n = %d positions left, but M + g = %d >= n.\n", npts,
-                M_EXT);
+        fprintf(stderr, "# only n = %d positions left, but M + g = %d >= n.\n",
+                npts, M_EXT);
         return 1;
       }
     }
@@ -2988,7 +2996,8 @@ int main(int argc, char **argv) {
       printf("# %d errors injected (seed %u)%s\n", NUM_ERRORS, seed,
              NUM_ERRORS > TAU ? "  -- beyond the basic bound" : "");
     if (force && NUM_ERRORS > TAU && !quiet)
-      puts("# FR/BMS: t exceeds the proven basic bound; running anyway (expected to "
+      puts("# FR/BMS: t exceeds the proven basic bound; running anyway "
+           "(expected to "
            "fail)");
     int okf = 1, okb = 1, okv = 1;
     if (run_fr) {
