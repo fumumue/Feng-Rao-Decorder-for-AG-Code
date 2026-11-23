@@ -26,9 +26,9 @@
 typedef uint16_t fe;
 
 #define MAXB 20000     /* max number of basis functions (M+1)          */
-#define MAXT 1420      /* max number of errors                         */
+#define MAXT 3000      /* max number of errors                         */
 #define MAXGEN 100    /* max generators of the ideal E                */
-#define MAXGENUS 6800 /* max genus handled by the voting part         */
+#define MAXGENUS 9000 /* max genus handled by the voting part         */
 #define SGMAX (MAXB + MAXGENUS + 64)
 #define MAXTERM 64
 #define MAXEDGE 32
