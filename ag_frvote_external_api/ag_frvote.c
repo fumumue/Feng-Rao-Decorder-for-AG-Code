@@ -1,5 +1,6 @@
 /*
- * ag_frvote.c -- one-point AG-code FR-VOTE for supported plane curves over GF(2^m)
+ * ag_frvote.c -- one-point AG-code FR-VOTE for supported plane curves over
+ * GF(2^m)
  *
  *   * one-point codes at a rational place at infinity: the basis of L(MP) is
  * built from the NEWTON POLYGON (monomials x^i y^j = lattice points; no local
@@ -25,8 +26,8 @@
 
 typedef uint16_t fe;
 
-#define MAXB 20000     /* max number of basis functions (M+1)          */
-#define MAXT 3000      /* max number of errors                         */
+#define MAXB 20000    /* max number of basis functions (M+1)          */
+#define MAXT 3000     /* max number of errors                         */
 #define MAXGEN 100    /* max generators of the ideal E                */
 #define MAXGENUS 9000 /* max genus handled by the voting part         */
 #define SGMAX (MAXB + MAXGENUS + 64)
@@ -683,7 +684,7 @@ static int solve_L(const int *mult, int Jfix, int Jstep, int Jmax, int verbose,
       fprintf(stderr, "matrix too large (E=%zu, K=%d)\n", E, K);
       exit(1);
     }
-    fe *Mx = calloc(E * K ? E * K : 1, sizeof(fe));
+    fe *Mx = calloc((size_t)((E > 0 && K > 0) ? E * K : 1), sizeof(fe));
     size_t off = 0;
     for (int q = 0; q < np; q++) {
       int d = pl[q].d;
@@ -1150,7 +1151,8 @@ static int newton_basis(int e, int Mx, NBas *out) {
   cb[nc] = ed[e].wy;
   ck[nc] = Mx;
   nc++;
-  int *ri = malloc(sizeof(int) * (Mx + 1)), *rj = malloc(sizeof(int) * (Mx + 1));
+  int *ri = malloc(sizeof(int) * (Mx + 1)),
+      *rj = malloc(sizeof(int) * (Mx + 1));
   char *have = calloc(Mx + 1, 1);
   int bad = 0;
   for (int dir = 0; dir < 2 && !bad; ++dir)
@@ -1207,8 +1209,8 @@ static int newton_basis(int e, int Mx, NBas *out) {
   int cnt = 0;
   for (int w = 0; w <= Mx; ++w)
     cnt += have[w];
-  int ok = !bad && have[0] && ri[0] == 0 && rj[0] == 0 &&
-           cnt == Mx + 1 - genus_g;
+  int ok =
+      !bad && have[0] && ri[0] == 0 && rj[0] == 0 && cnt == Mx + 1 - genus_g;
   int laurent = 0;
   if (ok)
     for (int w = 0; w <= Mx; ++w)
@@ -1252,11 +1254,40 @@ static fe mono_eval(fe x, fe y, int i, int j) {
     return 1;
   if ((i != 0 && !x) || (j != 0 && !y))
     return 0;
-  long long ex = ((long long)i * (x ? glog[x] : 0) +
-                  (long long)j * (y ? glog[y] : 0)) % FO;
+  long long ex =
+      ((long long)i * (x ? glog[x] : 0) + (long long)j * (y ? glog[y] : 0)) %
+      FO;
   if (ex < 0)
     ex += FO;
   return gexp[ex];
+}
+
+/* Fast row evaluation: out[k] = x_k^i y_k^j for k < n, using precomputed
+ * log arrays (lx[k], ly[k] = -1 for a zero coordinate).  Same result as
+ * mono_eval, but without per-element 64-bit division (Barrett reduction). */
+static void mono_eval_row(fe *out, int n, const int *lx, const int *ly, int i,
+                          int j) {
+  if (i == 0 && j == 0) {
+    for (int k = 0; k < n; ++k)
+      out[k] = 1;
+    return;
+  }
+  int ie = i % FO, je = j % FO;
+  if (ie < 0)
+    ie += FO;
+  if (je < 0)
+    je += FO;
+  const uint64_t magic = ((uint64_t)1 << 40) / (uint64_t)FO + 1;
+  for (int k = 0; k < n; ++k) {
+    int a = lx[k], b = ly[k];
+    if ((i != 0 && a < 0) || (j != 0 && b < 0)) {
+      out[k] = 0;
+      continue;
+    }
+    uint32_t ex = (uint32_t)(ie * (a < 0 ? 0 : a) + je * (b < 0 ? 0 : b));
+    uint32_t q = (uint32_t)(((uint64_t)ex * magic) >> 40);
+    out[k] = gexp[ex - q * (uint32_t)FO];
+  }
 }
 
 /* d_FR(M) = min { nu(s) : s > M, s in H },  nu(s) = #{(a,b) in H^2, a+b = s} */
@@ -1318,6 +1349,10 @@ static void init_semigroup(void) {
 }
 
 /* ---- syndromes ---- */
+static int use_poly;
+static int compact_fr_mode;
+static fe basis_value_at(int basis_index, int point_index);
+static fe basis_syndrome(int basis_index);
 static const fe *recv;
 static int *nz_idx;
 static int nz_cnt;
@@ -1334,6 +1369,8 @@ static fe synd(int ia, int ib, const fe *wt) {
   return acc;
 }
 static fe synd1(int ia) {
+  if (use_poly)
+    return basis_syndrome(ia);
   fe acc = 0;
   for (int n = 0; n < nz_cnt; ++n)
     acc ^= mul(recv[nz_idx[n]], basis[ia].val[nz_idx[n]]);
@@ -1362,56 +1399,133 @@ static int api_completed = 0;
 static fe *api_owned_received = NULL;
 static size_t *api_position_map = NULL;
 
-static fe aug[MAXB][MAXT + 2];
+static fe *aug =
+    NULL; /* resolve_by_values: allocated to the active row window */
 static fe err_val[MAXT + 1];
 
+/* Error values: solve  sum_k e_k h_a(P_k) = S_a  (a = 0 .. m-1).
+ * Only ~n rows are needed to determine the n unknowns, so forward elimination
+ * is done on the first R = n + slack rows only (O(n^3/3) instead of
+ * O(m n^2/2)); the remaining rows are merely verified afterwards, O(m n).
+ * The inner loop is branch-free: the pivot row is kept in log form and the
+ * zero element is mapped to a sentinel log whose exp-table entry is 0. */
 static int resolve_by_values(int *found, int *nfound) {
   int n = *nfound, m = count_basis_upto(M_SYND);
   if (n > MAXT)
     return 0;
-  for (int a = 0; a < m; ++a) {
+  const int SENT = 2 * FO;
+  fe *E = malloc(sizeof(fe) * (size_t)(3 * FO + 8));
+  uint16_t *lg = malloc(sizeof(uint16_t) * (size_t)(n + 2));
+  fe *x = malloc(sizeof(fe) * (size_t)(n + 1));
+  int ok = 0;
+  if (!E || !lg || !x)
+    goto done;
+  for (int i = 0; i < 3 * FO + 8; ++i)
+    E[i] = i < 2 * FO ? gexp[i % FO] : 0;
+  int R = n + 32 < m ? n + 32 : m;
+  int aug_cap = R;
+  aug = calloc((size_t)aug_cap * (size_t)(n + 1), sizeof(fe));
+  if (!aug)
+    goto done;
+  for (;;) {
+    for (int a = 0; a < R; ++a) {
+      for (int k = 0; k < n; ++k)
+        aug[(size_t)a * (size_t)(n + 1) + (size_t)k] =
+            basis_value_at(a, found[k]);
+      aug[(size_t)a * (size_t)(n + 1) + (size_t)n] = synd1(a);
+    }
+    int retry = 0;
+    for (int c = 0; c < n; ++c) {
+      int p = -1;
+      for (int a = c; a < R; ++a)
+        if (aug[(size_t)a * (size_t)(n + 1) + (size_t)c]) {
+          p = a;
+          break;
+        }
+      if (p < 0) {
+        if (R < m) {
+          retry = 1; /* rare: enlarge the row window and start over */
+          break;
+        }
+        goto done;
+      }
+      if (p != c)
+        for (int k = c; k <= n; ++k) {
+          fe t = aug[(size_t)p * (size_t)(n + 1) + (size_t)k];
+          aug[(size_t)p * (size_t)(n + 1) + (size_t)k] =
+              aug[(size_t)c * (size_t)(n + 1) + (size_t)k];
+          aug[(size_t)c * (size_t)(n + 1) + (size_t)k] = t;
+        }
+      fe iv = inv(aug[(size_t)c * (size_t)(n + 1) + (size_t)c]);
+      aug[(size_t)c * (size_t)(n + 1) + (size_t)c] = 1;
+      lg[c] = 0;
+      for (int k = c + 1; k <= n; ++k) {
+        aug[(size_t)c * (size_t)(n + 1) + (size_t)k] =
+            mul(aug[(size_t)c * (size_t)(n + 1) + (size_t)k], iv);
+        lg[k] = aug[(size_t)c * (size_t)(n + 1) + (size_t)k]
+                    ? glog[aug[(size_t)c * (size_t)(n + 1) + (size_t)k]]
+                    : (uint16_t)SENT;
+      }
+      for (int a = c + 1; a < R; ++a) {
+        fe f = aug[(size_t)a * (size_t)(n + 1) + (size_t)c];
+        if (!f)
+          continue;
+        const int lf = glog[f];
+        fe *row = aug + (size_t)a * (size_t)(n + 1);
+        for (int k = c + 1; k <= n; ++k)
+          row[k] ^= E[lf + lg[k]];
+        row[c] = 0;
+      }
+    }
+    if (retry) {
+      R = m;
+      if (R > aug_cap) {
+        fe *tmp = realloc(aug, (size_t)R * (size_t)(n + 1) * sizeof(fe));
+        if (!tmp)
+          goto done;
+        aug = tmp;
+        aug_cap = R;
+      }
+      continue;
+    }
+    break;
+  }
+  for (int a = n; a < R; ++a)
+    if (aug[(size_t)a * (size_t)(n + 1) + (size_t)n])
+      goto done; /* inconsistent */
+  /* back substitution */
+  for (int c = n - 1; c >= 0; --c) {
+    fe acc = aug[(size_t)c * (size_t)(n + 1) + (size_t)n];
+    for (int k = c + 1; k < n; ++k)
+      acc ^= mul(aug[(size_t)c * (size_t)(n + 1) + (size_t)k], x[k]);
+    x[c] = acc;
+  }
+  /* verify the rows that were not used for elimination */
+  for (int a = R; a < m; ++a) {
+    fe acc = synd1(a);
     for (int k = 0; k < n; ++k)
-      aug[a][k] = basis[a].val[found[k]];
-    aug[a][n] = synd1(a);
+      acc ^= mul(x[k], basis_value_at(a, found[k]));
+    if (acc)
+      goto done;
   }
-  for (int c = 0; c < n; ++c) {
-    int p = -1;
-    for (int a = c; a < m; ++a)
-      if (aug[a][c]) {
-        p = a;
-        break;
+  {
+    int keep = 0;
+    for (int k = 0; k < n; ++k)
+      if (x[k]) {
+        found[keep] = found[k];
+        err_val[keep] = x[k];
+        ++keep;
       }
-    if (p < 0)
-      return 0;
-    if (p != c)
-      for (int k = 0; k <= n; ++k) {
-        fe t = aug[p][k];
-        aug[p][k] = aug[c][k];
-        aug[c][k] = t;
-      }
-    fe iv = inv(aug[c][c]);
-    for (int k = c; k <= n; ++k)
-      aug[c][k] = mul(aug[c][k], iv);
-    for (int a = 0; a < m; ++a) {
-      fe f = aug[a][c];
-      if (a == c || !f)
-        continue;
-      for (int k = c; k <= n; ++k)
-        aug[a][k] ^= mul(f, aug[c][k]);
-    }
+    *nfound = keep;
   }
-  for (int a = n; a < m; ++a)
-    if (aug[a][n])
-      return 0;
-  int keep = 0;
-  for (int k = 0; k < n; ++k)
-    if (aug[k][n]) {
-      found[keep] = found[k];
-      err_val[keep] = aug[k][n];
-      ++keep;
-    }
-  *nfound = keep;
-  return 1;
+  ok = 1;
+done:
+  free(E);
+  free(lg);
+  free(x);
+  free(aug);
+  aug = NULL;
+  return ok;
 }
 
 static void resolve_and_store(Result *R) {
@@ -1433,91 +1547,182 @@ static void resolve_and_store(Result *R) {
 
 /* ================= FR: basic algorithm + characteristic polynomial
  * ================= */
-static uint16_t (*plr)[MAXB], (*plc)[MAXB];   /* ピボット行の log(スロット MAXT 個) */
 static int slot_of_row[MAXB];
 static fe *E0f;
-
-/* ---- 後ろで定義されるものの前方宣言 ---- */
-static int use_poly;                       /* 後ろの "static int use_poly = 0, ..." と両立する(仮定義) */
 static fe *pp_S;
 static inline int pp_at(int i, int j);
-static int *bas_ei, *bas_ej;               /* main で設定 */
-
+static int *bas_ei, *bas_ej;
+static int piv_of_row[MAXB], row_of_col[MAXB];
+static fe pivinv[MAXB];
+static fe **coefm; /* triangular locator coefficient rows, allocated to nl */
+static int coefm_rows;
+static fe *fr_coef_blk;
+static size_t fr_coef_stride;
+static fe *red_blk;
+static size_t fr_stride;
+static uint8_t **plr, **plc;
+static void free_pivot_rows(void) {
+  if (plr) {
+    for (int i = 0; i < MAXT; ++i)
+      free(plr[i]);
+    free(plr);
+    plr = NULL;
+  }
+  if (plc) {
+    for (int i = 0; i < MAXT; ++i)
+      free(plc[i]);
+    free(plc);
+    plc = NULL;
+  }
+}
 
 static inline fe synd_fast(int a, int b, int shi, int shj) {
-  if (!bas_ei || !bas_ej) { fprintf(stderr, "bas_ei/bas_ej not set\n"); abort(); }
+  if (!bas_ei || !bas_ej) {
+    fprintf(stderr, "bas_ei/bas_ej not set\n");
+    abort();
+  }
   int t = pp_at(bas_ei[a] + bas_ei[b] + shi, bas_ej[a] + bas_ej[b] + shj);
   if (t < 0) {
-    fprintf(stderr, "synd_fast: lattice point not in table (a=%d b=%d)\n", a, b);
+    fprintf(stderr, "synd_fast: lattice point not in table (a=%d b=%d)\n", a,
+            b);
     abort();
   }
   return pp_S[t];
 }
-
-/* ---- 消えていた元の宣言 ---- */
-static fe red[MAXB][MAXB];
-static fe coefm[MAXB][MAXB];
-static int piv_of_row[MAXB], row_of_col[MAXB];
-static fe pivinv[MAXB];
-
-static uint16_t (*plr)[MAXB], (*plc)[MAXB];
-static int slot_of_row[MAXB];
-static fe *E0f;
-
 
 static inline fe synd_fast2(int a, int b, int shi, int shj) {
   int t = pp_at(bas_ei[a] + bas_ei[b] + shi, bas_ej[a] + bas_ej[b] + shj);
   return pp_S[t];
 }
 
-/* ---- 消えていた元の宣言 ---- */
-static fe red[MAXB][MAXB];
-static fe coefm[MAXB][MAXB];
-static int piv_of_row[MAXB], row_of_col[MAXB];
-static fe pivinv[MAXB];
-
-/* ---- 私が書いた追加分 ---- */
-static uint16_t (*plr)[MAXB], (*plc)[MAXB];
-static int slot_of_row[MAXB];
-static fe *E0f;
-
-
 #define FR_BLK 64
+/* Log values are in [0, 2*FO].  FM+1 bits are sufficient, so store
+ * pivot rows packed instead of spending 16 bits per log value. */
+/* plain uint16 log rows (the bit-packed variant was ~1.7x slower in the hot
+ * loop and saved only ~38% of a small table) */
+static inline size_t packed_log_bytes(size_t n) { return n * sizeof(uint16_t); }
+static inline void packed_log_set(uint8_t *p, size_t i, uint16_t v) {
+  ((uint16_t *)p)[i] = v;
+}
+static inline uint16_t packed_log_get(const uint8_t *p, size_t i) {
+  return ((const uint16_t *)p)[i];
+}
 static int fr_pos[MAXB], fr_ncol[MAXB];
 
-/* 行 i を列 j0 から簡約する。ピボット列を持たない非零の列で止まり、その列を返す。
+/* 行 i を列 j0
+ * から簡約する。ピボット列を持たない非零の列で止まり、その列を返す。
  * 最後まで消えたら ncol を返す。row_of_col / plr / plc は読むだけ。 */
-static int fr_run(int i, int ncol, int needc, int j0) {
-  fe *Ri = red[i];
+static int fr_run(fe *Ri, fe *Ci, int ncol, int needc, int j0) {
   for (int j = j0; j < ncol; ++j) {
     fe v = Ri[j];
-    if (!v) continue;
+    if (!v)
+      continue;
     int p = row_of_col[j];
-    if (p < 0) return j;
-    int s  = slot_of_row[p];
+    if (p < 0)
+      return j;
+    int s = slot_of_row[p];
     int lf = glog[mul(v, pivinv[p])];
-    const uint16_t *lr = plr[s];
-    for (int jj = j; jj < ncol; ++jj) Ri[jj] ^= E0f[lf + lr[jj]];
+    const uint8_t *lr = plr[s];
+    for (int jj = j; jj < ncol; ++jj)
+      Ri[jj] ^= E0f[lf + packed_log_get(lr, (size_t)jj)];
     if (needc) {
-      const uint16_t *lc = plc[s];
-      fe *Ci = coefm[i];
-      for (int k = 0; k <= p; ++k) Ci[k] ^= E0f[lf + lc[k]];
+      const uint8_t *lc = plc[s];
+      for (int k = 0; k <= p; ++k)
+        Ci[k] ^= E0f[lf + packed_log_get(lc, (size_t)k)];
     }
   }
   return ncol;
 }
 
+static int alloc_coefm(int nl) {
+  if (coefm) {
+    for (int i = 0; i < coefm_rows; ++i)
+      free(coefm[i]);
+    free(coefm);
+    coefm = NULL;
+  }
+  coefm = calloc((size_t)nl, sizeof(*coefm));
+  if (!coefm)
+    return -1;
+  coefm_rows = nl;
+  for (int i = 0; i < nl; ++i) {
+    coefm[i] = calloc((size_t)i + 1, sizeof(**coefm));
+    if (!coefm[i]) {
+      for (int j = 0; j < i; ++j)
+        free(coefm[j]);
+      free(coefm);
+      coefm = NULL;
+      coefm_rows = 0;
+      return -1;
+    }
+  }
+  return 0;
+}
+
+static void free_coefm(void) {
+  if (coefm) {
+    for (int i = 0; i < coefm_rows; ++i)
+      free(coefm[i]);
+    free(coefm);
+    coefm = NULL;
+  }
+  coefm_rows = 0;
+}
+
+static int fr_locator_is_minimal(int basis_row) {
+  int b = basis[basis_row].rho;
+  for (int q = 0; q < ngenH; ++q) {
+    int a = b - genH[q];
+    if (a >= 0 && a < SGMAX && in_H[a]) {
+      int ia = idx_of_ord[a];
+      if (ia >= 0 && ia < basis_row && piv_of_row[ia] < 0)
+        return 0;
+    }
+  }
+  return 1;
+}
+
 static int feng_rao_reduce(void) {
   int nrows = count_basis_upto(ROW_MAX);
-  int nl    = count_basis_upto(L_DEG);
+  int nl = count_basis_upto(L_DEG);
   int nslot = 0;
+  free_coefm();
+  if (compact_fr_mode) {
+    coefm = calloc((size_t)nl, sizeof(*coefm));
+    if (!coefm)
+      return -1;
+    coefm_rows = nl;
+    fr_coef_stride = (size_t)(nl > 0 ? nl : 1);
+    free(fr_coef_blk);
+    fr_coef_blk = calloc((size_t)FR_BLK * fr_coef_stride, sizeof(fe));
+    if (!fr_coef_blk)
+      return -1;
+  } else if (alloc_coefm(nl) != 0)
+    return -1;
+  int maxcol = count_basis_upto(M_SYND - basis[0].rho);
+  if (maxcol < 1)
+    maxcol = 1;
+  fr_stride = (size_t)maxcol;
+  free(red_blk);
+  red_blk = calloc((size_t)FR_BLK * fr_stride, sizeof(fe));
+  if (!red_blk)
+    return -1;
   if (!E0f) {
     E0f = calloc((size_t)4 * FO + 8, sizeof(fe));
-    for (int k = 0; k < 2 * FO; ++k) E0f[k] = gexp[k];
-    plr = calloc(MAXT, sizeof *plr);
-    plc = calloc(MAXT, sizeof *plc);
+    for (int k = 0; k < 2 * FO; ++k)
+      E0f[k] = gexp[k];
+    if (!E0f)
+      return -1;
   }
-  for (int j = 0; j < MAXB; ++j) row_of_col[j] = -1;
+  free_pivot_rows();
+  plr = calloc((size_t)MAXT, sizeof(*plr));
+  plc = calloc((size_t)MAXT, sizeof(*plc));
+  if (!plr || !plc) {
+    free_pivot_rows();
+    return -1;
+  }
+  for (int j = 0; j < MAXB; ++j)
+    row_of_col[j] = -1;
 
   for (int b0 = 0; b0 < nrows; b0 += FR_BLK) {
     int b1 = b0 + FR_BLK < nrows ? b0 + FR_BLK : nrows;
@@ -1525,83 +1730,163 @@ static int feng_rao_reduce(void) {
     /* フェーズA: 成分作り + 確定済みピボットでの簡約(並列) */
 #pragma omp parallel for schedule(dynamic, 1)
     for (int i = b0; i < b1; ++i) {
-      int ncol  = count_basis_upto(M_SYND - basis[i].rho);
+      int ncol = count_basis_upto(M_SYND - basis[i].rho);
       int needc = (i < nl);
       fr_ncol[i] = ncol;
       piv_of_row[i] = -1;
+      fe *Ri = red_blk + (size_t)(i - b0) * fr_stride;
+      fe *Ci = compact_fr_mode ? fr_coef_blk + (size_t)(i - b0) * fr_coef_stride
+                               : (needc ? coefm[i] : NULL);
       for (int j = 0; j < ncol; ++j)
-        red[i][j] = use_poly ? synd_fast(i, j, 0, 0) : synd(i, j, NULL);
-      if (needc) { memset(coefm[i], 0, (size_t)(i + 1) * sizeof(fe)); coefm[i][i] = 1; }
-      fr_pos[i] = fr_run(i, ncol, needc, 0);
+        Ri[j] = use_poly ? synd_fast(i, j, 0, 0) : synd(i, j, NULL);
+      if (needc) {
+        memset(Ci, 0, (size_t)(i + 1) * sizeof(fe));
+        Ci[i] = 1;
+      }
+      fr_pos[i] = fr_run(Ri, Ci, ncol, needc, 0);
     }
 
     /* フェーズB: ブロック内の新ピボットを使って続行(逐次) */
     for (int i = b0; i < b1; ++i) {
-      int ncol  = fr_ncol[i];
+      int ncol = fr_ncol[i];
       int needc = (i < nl);
-      int j = fr_run(i, ncol, needc, fr_pos[i]);
-      if (j >= ncol) continue;                 /* 依存行: 0 になった */
-      if (nslot >= MAXT - 1) return -1;        /* ピボット過多 */
+      fe *Ri = red_blk + (size_t)(i - b0) * fr_stride;
+      fe *Ci = compact_fr_mode ? fr_coef_blk + (size_t)(i - b0) * fr_coef_stride
+                               : (needc ? coefm[i] : NULL);
+      int j = fr_run(Ri, Ci, ncol, needc, fr_pos[i]);
+      if (j >= ncol) {
+        /* Dependent row: FR-VOTE only retains coefficient vectors for the
+         * minimal non-pivot generators that will actually become locators. */
+        if (compact_fr_mode && needc && fr_locator_is_minimal(i)) {
+          coefm[i] = malloc((size_t)(i + 1) * sizeof(fe));
+          if (!coefm[i])
+            return -1;
+          memcpy(coefm[i], Ci, (size_t)(i + 1) * sizeof(fe));
+        }
+        continue;
+      }
+      if (nslot >= MAXT - 1)
+        return -1; /* ピボット過多 */
       int s = nslot++;
       slot_of_row[i] = s;
+      plr[s] = calloc(1, packed_log_bytes((size_t)(ncol ? ncol : 1)));
+      if (!plr[s])
+        return -1;
       for (int jj = 0; jj < ncol; ++jj)
-        plr[s][jj] = red[i][jj] ? glog[red[i][jj]] : (uint16_t)(2 * FO);
-      if (needc)
+        packed_log_set(plr[s], (size_t)jj,
+                       Ri[jj] ? glog[Ri[jj]] : (uint16_t)(2 * FO));
+      if (needc) {
+        plc[s] = calloc(1, packed_log_bytes((size_t)(i + 1)));
+        if (!plc[s])
+          return -1;
         for (int k = 0; k <= i; ++k)
-          plc[s][k] = coefm[i][k] ? glog[coefm[i][k]] : (uint16_t)(2 * FO);
+          packed_log_set(plc[s], (size_t)k,
+                         Ci[k] ? glog[Ci[k]] : (uint16_t)(2 * FO));
+      }
       piv_of_row[i] = j;
       row_of_col[j] = i;
-      pivinv[i] = inv(red[i][j]);
+      pivinv[i] = inv(Ri[j]);
     }
+  }
+  if (compact_fr_mode) {
+    free(fr_coef_blk);
+    fr_coef_blk = NULL;
+    fr_coef_stride = 0;
   }
   return nrows;
 }
 
-
 static int feng_rao_reduce2(void) {
   int nrows = count_basis_upto(ROW_MAX);
-  int nl    = count_basis_upto(L_DEG);
+  int maxcol = count_basis_upto(M_SYND - basis[0].rho);
+  if (maxcol < 1)
+    maxcol = 1;
+  fe *red2 = calloc((size_t)nrows * (size_t)maxcol, sizeof(fe));
+  if (!red2)
+    return -1;
+  int nl = count_basis_upto(L_DEG);
   int nslot = 0;
+  if (alloc_coefm(nl) != 0) {
+    free(red2);
+    return -1;
+  }
   if (!E0f) {
     E0f = calloc((size_t)4 * FO + 8, sizeof(fe));
-    for (int k = 0; k < 2 * FO; ++k) E0f[k] = gexp[k];
-    plr = calloc(MAXT, sizeof *plr);
-    plc = calloc(MAXT, sizeof *plc);
+    for (int k = 0; k < 2 * FO; ++k)
+      E0f[k] = gexp[k];
+    if (!E0f) {
+      free(red2);
+      return -1;
+    }
   }
-  for (int j = 0; j < MAXB; ++j) row_of_col[j] = -1;
+  free_pivot_rows();
+  plr = calloc((size_t)MAXT, sizeof(*plr));
+  plc = calloc((size_t)MAXT, sizeof(*plc));
+  if (!plr || !plc) {
+    free(red2);
+    free_pivot_rows();
+    return -1;
+  }
+  for (int j = 0; j < MAXB; ++j)
+    row_of_col[j] = -1;
 
   for (int i = 0; i < nrows; ++i) {
-    int ncol  = count_basis_upto(M_SYND - basis[i].rho);
+    int ncol = count_basis_upto(M_SYND - basis[i].rho);
     int needc = (i < nl);
     for (int j = 0; j < ncol; ++j)
-      red[i][j] = use_poly ? synd_fast(i, j, 0, 0) : synd(i, j, NULL);
-    if (needc) { memset(coefm[i], 0, (size_t)(i + 1) * sizeof(fe)); coefm[i][i] = 1; }
+      red2[(size_t)i * (size_t)maxcol + (size_t)j] =
+          use_poly ? synd_fast(i, j, 0, 0) : synd(i, j, NULL);
+    if (needc) {
+      memset(coefm[i], 0, (size_t)(i + 1) * sizeof(fe));
+      coefm[i][i] = 1;
+    }
     piv_of_row[i] = -1;
 
     for (int j = 0; j < ncol; ++j) {
-      fe v = red[i][j];
-      if (!v) continue;
+      fe v = red2[(size_t)i * (size_t)maxcol + (size_t)j];
+      if (!v)
+        continue;
       int p = row_of_col[j];
       if (p >= 0) {
-        int s  = slot_of_row[p];
+        int s = slot_of_row[p];
         int lf = glog[mul(v, pivinv[p])];
-        const uint16_t *lr = plr[s];
-        fe *Ri = red[i];
-        for (int jj = j; jj < ncol; ++jj) Ri[jj] ^= E0f[lf + lr[jj]];
+        const uint8_t *lr = plr[s];
+        fe *Ri = red2 + (size_t)i * (size_t)maxcol;
+        for (int jj = j; jj < ncol; ++jj)
+          Ri[jj] ^= E0f[lf + packed_log_get(lr, (size_t)jj)];
         if (needc) {
-          const uint16_t *lc = plc[s];
+          const uint8_t *lc = plc[s];
           fe *Ci = coefm[i];
-          for (int k = 0; k <= p; ++k) Ci[k] ^= E0f[lf + lc[k]];
+          for (int k = 0; k <= p; ++k)
+            Ci[k] ^= E0f[lf + packed_log_get(lc, (size_t)k)];
         }
       } else {
-        if (nslot >= MAXT - 1) return -1;       /* ピボット過多 */
+        if (nslot >= MAXT - 1)
+          return -1; /* ピボット過多 */
         int s = nslot++;
         slot_of_row[i] = s;
+        plr[s] = calloc(1, packed_log_bytes((size_t)(ncol ? ncol : 1)));
+        if (!plr[s]) {
+          free(red2);
+          return -1;
+        }
         for (int jj = 0; jj < ncol; ++jj)
-          plr[s][jj] = red[i][jj] ? glog[red[i][jj]] : (uint16_t)(2 * FO);
-        if (needc)
+          packed_log_set(
+              plr[s], (size_t)jj,
+              red2[(size_t)i * (size_t)maxcol + (size_t)jj]
+                  ? glog[red2[(size_t)i * (size_t)maxcol + (size_t)jj]]
+                  : (uint16_t)(2 * FO));
+        if (needc) {
+          plc[s] = calloc(1, packed_log_bytes((size_t)(i + 1)));
+          if (!plc[s]) {
+            free(red2);
+            return -1;
+          }
           for (int k = 0; k <= i; ++k)
-            plc[s][k] = coefm[i][k] ? glog[coefm[i][k]] : (uint16_t)(2 * FO);
+            packed_log_set(plc[s], (size_t)k,
+                           coefm[i][k] ? glog[coefm[i][k]]
+                                       : (uint16_t)(2 * FO));
+        }
         piv_of_row[i] = j;
         row_of_col[j] = i;
         pivinv[i] = inv(v);
@@ -1609,28 +1894,19 @@ static int feng_rao_reduce2(void) {
       }
     }
   }
+  free(red2);
   return nrows;
 }
 
-
-
-
-
-typedef fe Mat[MAXT][MAXT];
-static Mat S0, SX, S0inv, Qm, WORK;
-static fe pol[MAXT + 1][MAXT + 1];
-
-static int mat_inverse(Mat m, Mat out, int n) {
-  memcpy(WORK, m, sizeof(Mat));
-  for (int i = 0; i < n; ++i) {
-    for (int j = 0; j < n; ++j)
-      out[i][j] = 0;
-    out[i][i] = 1;
-  }
+static int mat_inverse(fe *m, fe *out, fe *work, int n) {
+  memcpy(work, m, (size_t)n * (size_t)n * sizeof(fe));
+  memset(out, 0, (size_t)n * (size_t)n * sizeof(fe));
+  for (int i = 0; i < n; ++i)
+    out[(size_t)i * n + i] = 1;
   for (int c = 0; c < n; ++c) {
     int p = -1;
     for (int r = c; r < n; ++r)
-      if (WORK[r][c]) {
+      if (work[(size_t)r * n + c]) {
         p = r;
         break;
       }
@@ -1638,37 +1914,38 @@ static int mat_inverse(Mat m, Mat out, int n) {
       return 0;
     if (p != c)
       for (int i = 0; i < n; ++i) {
-        fe t;
-        t = WORK[p][i];
-        WORK[p][i] = WORK[c][i];
-        WORK[c][i] = t;
-        t = out[p][i];
-        out[p][i] = out[c][i];
-        out[c][i] = t;
+        fe t = work[(size_t)p * n + i];
+        work[(size_t)p * n + i] = work[(size_t)c * n + i];
+        work[(size_t)c * n + i] = t;
+        t = out[(size_t)p * n + i];
+        out[(size_t)p * n + i] = out[(size_t)c * n + i];
+        out[(size_t)c * n + i] = t;
       }
-    fe iv = inv(WORK[c][c]);
+    fe iv = inv(work[(size_t)c * n + c]);
     for (int i = 0; i < n; ++i) {
-      WORK[c][i] = mul(WORK[c][i], iv);
-      out[c][i] = mul(out[c][i], iv);
+      work[(size_t)c * n + i] = mul(work[(size_t)c * n + i], iv);
+      out[(size_t)c * n + i] = mul(out[(size_t)c * n + i], iv);
     }
     for (int r = 0; r < n; ++r) {
-      fe f = WORK[r][c];
+      fe f = work[(size_t)r * n + c];
       if (r == c || !f)
         continue;
       for (int i = 0; i < n; ++i) {
-        WORK[r][i] ^= mul(f, WORK[c][i]);
-        out[r][i] ^= mul(f, out[c][i]);
+        work[(size_t)r * n + i] ^= mul(f, work[(size_t)c * n + i]);
+        out[(size_t)r * n + i] ^= mul(f, out[(size_t)c * n + i]);
       }
     }
   }
   return 1;
 }
 
-static void charpoly(Mat H, int n, fe *g) {
+static void charpoly(fe *H, int n, fe *g, fe *pol) {
+#define HAT(i, j) H[(size_t)(i) * (size_t)n + (size_t)(j)]
+#define PAT(i, j) pol[(size_t)(i) * (size_t)(n + 1) + (size_t)(j)]
   for (int k = 0; k + 2 < n; ++k) {
     int p = -1;
     for (int i = k + 1; i < n; ++i)
-      if (H[i][k]) {
+      if (HAT(i, k)) {
         p = i;
         break;
       }
@@ -1676,49 +1953,51 @@ static void charpoly(Mat H, int n, fe *g) {
       continue;
     if (p != k + 1) {
       for (int j = 0; j < n; ++j) {
-        fe t = H[p][j];
-        H[p][j] = H[k + 1][j];
-        H[k + 1][j] = t;
+        fe t = HAT(p, j);
+        HAT(p, j) = HAT(k + 1, j);
+        HAT(k + 1, j) = t;
       }
       for (int i = 0; i < n; ++i) {
-        fe t = H[i][p];
-        H[i][p] = H[i][k + 1];
-        H[i][k + 1] = t;
+        fe t = HAT(i, p);
+        HAT(i, p) = HAT(i, k + 1);
+        HAT(i, k + 1) = t;
       }
     }
-    fe iv = inv(H[k + 1][k]);
+    fe iv = inv(HAT(k + 1, k));
     for (int i = k + 2; i < n; ++i) {
-      if (!H[i][k])
+      if (!HAT(i, k))
         continue;
-      fe f = mul(H[i][k], iv);
+      fe f = mul(HAT(i, k), iv);
       for (int j = 0; j < n; ++j)
-        H[i][j] ^= mul(f, H[k + 1][j]);
+        HAT(i, j) ^= mul(f, HAT(k + 1, j));
       for (int r = 0; r < n; ++r)
-        H[r][k + 1] ^= mul(f, H[r][i]);
+        HAT(r, k + 1) ^= mul(f, HAT(r, i));
     }
   }
-  pol[0][0] = 1;
+  PAT(0, 0) = 1;
   for (int k = 1; k <= n; ++k) {
     fe prod = 1;
     for (int d = 0; d <= k; ++d)
-      pol[k][d] = 0;
+      PAT(k, d) = 0;
     for (int d = 0; d < k; ++d) {
-      pol[k][d + 1] ^= pol[k - 1][d];
-      pol[k][d] ^= mul(H[k - 1][k - 1], pol[k - 1][d]);
+      PAT(k, d + 1) ^= PAT(k - 1, d);
+      PAT(k, d) ^= mul(HAT(k - 1, k - 1), PAT(k - 1, d));
     }
     for (int i = 1; i <= k - 1; ++i) {
-      prod = mul(prod, H[k - i][k - i - 1]);
+      prod = mul(prod, HAT(k - i, k - i - 1));
       if (!prod)
         break;
-      fe c = mul(H[k - i - 1][k - 1], prod);
+      fe c = mul(HAT(k - i - 1, k - 1), prod);
       if (!c)
         continue;
       for (int d = 0; d <= k - i - 1; ++d)
-        pol[k][d] ^= mul(c, pol[k - i - 1][d]);
+        PAT(k, d) ^= mul(c, PAT(k - i - 1, d));
     }
   }
   for (int d = 0; d <= n; ++d)
-    g[d] = pol[n][d];
+    g[d] = PAT(n, d);
+#undef HAT
+#undef PAT
 }
 
 static fe poly_eval(const fe *poly, int deg, fe t) {
@@ -1747,9 +2026,11 @@ static void build_omega_buckets(void) {
   free(fill);
 }
 
+#define FR_CHARPOLY_MAX 200
 static int decode_fr(Result *R, int quiet) {
-  static int Rr[MAXT], Cc[MAXT];
-  static fe g[MAXT + 1];
+  int Rr[MAXT], Cc[MAXT];
+  fe *g = NULL, *S0 = NULL, *SX = NULL, *S0inv = NULL, *Qm = NULL, *WORK = NULL,
+     *pol = NULL;
   fe *xv = calloc(npts, sizeof(fe));
   int T_ = 0, nl, nloc = 0;
   double t0 = now();
@@ -1784,6 +2065,76 @@ static int decode_fr(Result *R, int quiet) {
     free(xv);
     return 0;
   }
+  if (nloc == 0) {
+    /* No error-locating function of pole order <= L_DEG exists, so the
+     * characteristic polynomial / root search below cannot identify the
+     * error positions (t is beyond the basic bound).  Skip the O(T^3) work. */
+    if (!quiet)
+      puts("# FR : no error locator below the degree bound -> skipped "
+           "(beyond the basic bound)");
+    R->failed = 1;
+    free(xv);
+    return -1;
+  }
+  if (T_ > FR_CHARPOLY_MAX) {
+    /* Large staircase: the characteristic polynomial of the T x T matrix
+     * (inverse, product, Hessenberg form, recurrence: all O(T^3)) is only a
+     * filter that restricts the positions to those whose omega-value is a
+     * root.  The locators themselves already single out the error positions,
+     * and testing them directly costs O(n * small) because almost every
+     * position fails the first locator.  Scan all positions instead. */
+    t0 = now();
+    int nfound = 0, overflow = 0;
+    for (int idx = 0; idx < npts; ++idx) {
+      int vanish = 1;
+      for (int i = 0; i < nl && vanish; ++i) {
+        if (piv_of_row[i] >= 0)
+          continue;
+        fe acc = 0;
+        for (int k = 0; k <= i; ++k)
+          if (coefm[i][k])
+            acc ^= mul(coefm[i][k], basis[k].val[idx]);
+        if (acc)
+          vanish = 0;
+      }
+      if (vanish) {
+        if (nfound < MAXT)
+          R->pos[nfound++] = idx;
+        else
+          overflow = 1;
+      }
+    }
+    if (!quiet)
+      printf("# FR : T = %d > %d: positions found by scanning the locators "
+             "directly (no characteristic polynomial)\n",
+             T_, FR_CHARPOLY_MAX);
+    R->nfound = nfound;
+    R->overflow = overflow;
+    R->t_extract = now() - t0;
+    resolve_and_store(R);
+    free(xv);
+    return 0;
+  }
+  size_t tsq = (size_t)T_ * (size_t)T_;
+  S0 = calloc(tsq, sizeof(fe));
+  SX = calloc(tsq, sizeof(fe));
+  S0inv = calloc(tsq, sizeof(fe));
+  Qm = calloc(tsq, sizeof(fe));
+  WORK = calloc(tsq, sizeof(fe));
+  pol = calloc((size_t)(T_ + 1) * (size_t)(T_ + 1), sizeof(fe));
+  g = calloc((size_t)T_ + 1, sizeof(fe));
+  if (!S0 || !SX || !S0inv || !Qm || !WORK || !pol || !g) {
+    free(xv);
+    free(S0);
+    free(SX);
+    free(S0inv);
+    free(Qm);
+    free(WORK);
+    free(pol);
+    free(g);
+    R->failed = 1;
+    return -1;
+  }
 
   t0 = now();
   for (int a = 0; a < T_; ++a)
@@ -1799,24 +2150,32 @@ static int decode_fr(Result *R, int quiet) {
     xv[nz_idx[k]] = basis[1].val[nz_idx[k]];
   for (int a = 0; a < T_; ++a)
     for (int b = 0; b < T_; ++b) {
-      S0[a][b] = synd(Rr[a], Cc[b], NULL);
-      SX[a][b] = synd(Rr[a], Cc[b], xv);
+      S0[(size_t)(a) * (size_t)T_ + (size_t)(b)] = synd(Rr[a], Cc[b], NULL);
+      SX[(size_t)(a) * (size_t)T_ + (size_t)(b)] = synd(Rr[a], Cc[b], xv);
     }
-  if (!mat_inverse(S0, S0inv, T_)) {
+  if (!mat_inverse(S0, S0inv, WORK, T_)) {
     if (!quiet)
       puts("# FR : S0 is singular (rank deficient).");
     R->failed = 1;
     free(xv);
+    free(S0);
+    free(SX);
+    free(S0inv);
+    free(Qm);
+    free(WORK);
+    free(pol);
+    free(g);
     return -1;
   }
   for (int a = 0; a < T_; ++a)
     for (int b = 0; b < T_; ++b) {
       fe acc = 0;
       for (int k = 0; k < T_; ++k)
-        acc ^= mul(S0inv[a][k], SX[k][b]);
-      Qm[a][b] = acc;
+        acc ^= mul(S0inv[(size_t)(a) * (size_t)T_ + (size_t)(k)],
+                   SX[(size_t)(k) * (size_t)T_ + (size_t)(b)]);
+      Qm[(size_t)(a) * (size_t)T_ + (size_t)(b)] = acc;
     }
-  charpoly(Qm, T_, g);
+  charpoly(Qm, T_, g, pol);
   int nfound = 0, overflow = 0, nroots = 0;
   for (int th = 0; th < FS; ++th) {
     if (poly_eval(g, T_, (fe)th) != 0)
@@ -1849,6 +2208,13 @@ static int decode_fr(Result *R, int quiet) {
   R->t_extract = now() - t0;
   resolve_and_store(R);
   free(xv);
+  free(S0);
+  free(SX);
+  free(S0inv);
+  free(Qm);
+  free(WORK);
+  free(pol);
+  free(g);
   return 0;
 }
 
@@ -1892,26 +2258,71 @@ static void vec_axpy(fe *f, fe c, const fe *p) {
 
 /* ---- majority voting machinery ---- */
 static fe xhat[SGMAX];
-static fe Bw[MAXGENUS][MAXB];
+static fe **Bw;
 static int selp[MAXB];
 static int nsel_dual;
-static fe Aug[MAXB][MAXB + MAXGENUS];
+static fe *Aug;
 static int lgrow[MAXB + MAXGENUS];
 
 static int build_dual(void) {
   int *perm = malloc(sizeof(int) * npts);
-  static fe bsol[MAXB];
-  const int NB = nbasis, W = NB + GENUS;
+  const int NB = nbasis;
+  if (Bw) {
+    for (int v = 0; v < GENUS; ++v)
+      free(Bw[v]);
+    free(Bw);
+    Bw = NULL;
+  }
+  Bw = calloc((size_t)GENUS, sizeof(*Bw));
+  /* Keep the GENUS right-hand sides in Bw instead of appending them to Aug.
+   * This changes Aug from NB x (NB+GENUS) to NB x NB and avoids a second
+   * copy of the transformed right-hand sides. */
+  Aug = calloc((size_t)NB * (size_t)NB, sizeof(fe));
+  if (!Bw || !Aug) {
+    free(perm);
+    free(Aug);
+    Aug = NULL;
+    if (Bw) {
+      free(Bw);
+      Bw = NULL;
+    }
+    return -1;
+  }
+  for (int v = 0; v < GENUS; ++v) {
+    Bw[v] = calloc((size_t)NB, sizeof(fe));
+    if (!Bw[v]) {
+      for (int z = 0; z < v; ++z)
+        free(Bw[z]);
+      free(Bw);
+      Bw = NULL;
+      free(perm);
+      free(Aug);
+      Aug = NULL;
+      return -1;
+    }
+  }
   unsigned seed = 12345u;
   if (NB != M_SYND + 1 || basis[NB - GENUS].rho != M_SYND + 1) {
     fprintf(stderr,
             "dual basis: unexpected basis layout (need M >= conductor)\n");
     free(perm);
+    free(Aug);
+    Aug = NULL;
+    for (int v = 0; v < GENUS; ++v)
+      free(Bw[v]);
+    free(Bw);
+    Bw = NULL;
     return -1;
   }
   if (NB > npts) {
     fprintf(stderr, "dual basis: fewer points than basis functions\n");
     free(perm);
+    free(Aug);
+    Aug = NULL;
+    for (int v = 0; v < GENUS; ++v)
+      free(Bw[v]);
+    free(Bw);
+    Bw = NULL;
     return -1;
   }
   for (int attempt = 0; attempt < 8; ++attempt) {
@@ -1929,14 +2340,14 @@ static int build_dual(void) {
     nsel_dual = NB;
     for (int j = 0; j < NB; ++j) {
       for (int p = 0; p < NB; ++p)
-        Aug[j][p] = basis[j].val[selp[p]];
+        Aug[(size_t)j * (size_t)NB + (size_t)p] = basis[j].val[selp[p]];
       for (int v = 0; v < GENUS; ++v)
-        Aug[j][NB + v] = (j == NB - GENUS + v) ? 1 : 0;
+        Bw[v][j] = (j == NB - GENUS + v) ? 1 : 0;
     }
     for (int c = 0; c < NB && !singular; ++c) {
       int p = -1;
       for (int r = c; r < NB; ++r)
-        if (Aug[r][c]) {
+        if (Aug[(size_t)r * (size_t)NB + (size_t)c]) {
           p = r;
           break;
         }
@@ -1944,48 +2355,68 @@ static int build_dual(void) {
         singular = 1;
         break;
       }
-      if (p != c)
-        for (int k = 0; k < W; ++k) {
-          fe t = Aug[p][k];
-          Aug[p][k] = Aug[c][k];
-          Aug[c][k] = t;
+      if (p != c) {
+        for (int k = 0; k < NB; ++k) {
+          fe t = Aug[(size_t)p * (size_t)NB + (size_t)k];
+          Aug[(size_t)p * (size_t)NB + (size_t)k] =
+              Aug[(size_t)c * (size_t)NB + (size_t)k];
+          Aug[(size_t)c * (size_t)NB + (size_t)k] = t;
         }
-      fe iv = inv(Aug[c][c]);
-      for (int k = c; k < W; ++k)
-        Aug[c][k] = mul(Aug[c][k], iv);
-      for (int k = c + 1; k < W; ++k)
-        lgrow[k] = Aug[c][k] ? (int)glog[Aug[c][k]] : -1;
+        for (int v = 0; v < GENUS; ++v) {
+          fe t = Bw[v][p];
+          Bw[v][p] = Bw[v][c];
+          Bw[v][c] = t;
+        }
+      }
+      fe iv = inv(Aug[(size_t)c * (size_t)NB + (size_t)c]);
+      for (int k = c; k < NB; ++k)
+        Aug[(size_t)c * (size_t)NB + (size_t)k] =
+            mul(Aug[(size_t)c * (size_t)NB + (size_t)k], iv);
+      for (int v = 0; v < GENUS; ++v)
+        Bw[v][c] = mul(Bw[v][c], iv);
+      for (int k = c + 1; k < NB; ++k)
+        lgrow[k] = Aug[(size_t)c * (size_t)NB + (size_t)k]
+                       ? (int)glog[Aug[(size_t)c * (size_t)NB + (size_t)k]]
+                       : -1;
 #pragma omp parallel for schedule(static)
       for (int r = c + 1; r < NB; ++r) {
-        fe f = Aug[r][c];
-        fe *row = Aug[r];
+        fe f = Aug[(size_t)r * (size_t)NB + (size_t)c];
         if (!f)
           continue;
         int lf = glog[f];
-        for (int k = c + 1; k < W; ++k)
+        fe *row = Aug + (size_t)r * (size_t)NB;
+        for (int k = c + 1; k < NB; ++k)
           if (lgrow[k] >= 0)
             row[k] ^= gexp[lf + lgrow[k]];
         row[c] = 0;
+        /* Each worker owns row r, so updating all RHS rows here is race-free
+         * only if v is included in the same row operation. */
+        for (int v = 0; v < GENUS; ++v)
+          Bw[v][r] ^= mul(f, Bw[v][c]);
       }
     }
     if (singular)
       continue;
     for (int v = 0; v < GENUS; ++v) {
+      /* Back substitution in place: Bw[v] already contains the transformed
+       * right-hand side, and solved entries are overwritten from bottom up. */
       for (int i = NB - 1; i >= 0; --i) {
-        fe acc = Aug[i][NB + v];
+        fe acc = Bw[v][i];
         for (int k = i + 1; k < NB; ++k)
-          if (Aug[i][k] && bsol[k])
-            acc ^= mul(Aug[i][k], bsol[k]);
-        bsol[i] = acc;
+          if (Aug[(size_t)i * (size_t)NB + (size_t)k] && Bw[v][k])
+            acc ^= mul(Aug[(size_t)i * (size_t)NB + (size_t)k], Bw[v][k]);
+        Bw[v][i] = acc;
       }
-      for (int i = 0; i < NB; ++i)
-        Bw[v][i] = bsol[i];
     }
     free(perm);
+    free(Aug);
+    Aug = NULL;
     return 0;
   }
   fprintf(stderr, "dual basis: evaluation matrix singular\n");
   free(perm);
+  free(Aug);
+  Aug = NULL;
   return -1;
 }
 
@@ -2014,17 +2445,23 @@ static int dual_selftest(void) {
 
 /* branch-free GF multiply-accumulate in the log domain: zero is the log code
  * 2*FO, and the table E0 is 0 beyond 2*FO, so  E0[la + lb] = a*b  (0 if either
- * is zero).  LBw holds the logs of the dual rows Bw.                          */
+ * is zero).  LBw holds the logs of the dual rows Bw. */
 static fe *E0;
-static uint16_t (*LBw)[MAXB];
+static uint16_t **LBw;
 static void init_dual_logs(void) {
   E0 = calloc((size_t)4 * FO + 8, sizeof(fe));
   for (int k = 0; k < 2 * FO; ++k)
     E0[k] = gexp[k];
-  LBw = calloc((size_t)MAXGENUS, sizeof *LBw);
-  for (int v = 0; v < GENUS; ++v)
+  LBw = calloc((size_t)GENUS, sizeof *LBw);
+  if (!LBw)
+    return;
+  for (int v = 0; v < GENUS; ++v) {
+    LBw[v] = calloc((size_t)nsel_dual, sizeof(**LBw));
+    if (!LBw[v])
+      return;
     for (int p = 0; p < nsel_dual; ++p)
       LBw[v][p] = Bw[v][p] ? glog[Bw[v][p]] : (uint16_t)(2 * FO);
+  }
 }
 
 /* ext_known results are cached per BMS step n (same function vector, same m):
@@ -2096,13 +2533,7 @@ static fe xdisc(const fe *f, int m, int n) {
   known = ext_known(f, m, n, &an);
   return (fe)(known ^ mul(an, xhat[n]));
 }
-static fe true_syndrome(int n) {
-  const fe *ph = basis[idx_of_ord[n]].val;
-  fe acc = 0;
-  for (int i = 0; i < nz_cnt; ++i)
-    acc ^= mul(recv[nz_idx[i]], ph[nz_idx[i]]);
-  return acc;
-}
+static fe true_syndrome(int n) { return basis_syndrome(idx_of_ord[n]); }
 
 /* ================================================================== */
 /*  MONOMIAL SYNDROME TABLES (Newton polygon, NO dual basis)            */
@@ -2115,7 +2546,8 @@ static fe true_syndrome(int n) {
  *      x^h * F = 0  :  S(h+vA) = S(h+vB) + sum_{other terms t} S(h+vt)
  * where vA, vB are the two terms of F on the pole edge (same pole order; the
  * other terms have strictly lower pole order).  So f is kept as a coefficient
- * vector over the lattice points: no evaluation, no dual basis, no elimination. */
+ * vector over the lattice points: no evaluation, no dual basis, no elimination.
+ */
 static int use_poly = 0, use_poly_opt = 1;
 static int NPT;
 static int *pp_i, *pp_j, *pp_w, *pp_q, *pp_low, *pp_dep;
@@ -2132,6 +2564,30 @@ static inline int pp_at(int i, int j) {
   if (i < 0 || i >= pp_bw || j < 0 || j >= pp_bh)
     return -1;
   return pp_box[(size_t)i * pp_bh + j];
+}
+
+/* The Newton path can evaluate a basis monomial directly at one point.  This
+ * avoids retaining the full basis-by-position evaluation matrix when only
+ * FR-VOTE is selected. */
+static fe basis_value_at(int basis_index, int point_index) {
+  if (use_poly && bas_ei && bas_ej)
+    return mono_eval(PXv[point_index], PYv[point_index], bas_ei[basis_index],
+                     bas_ej[basis_index]);
+  return basis[basis_index].val[point_index];
+}
+
+static fe basis_syndrome(int basis_index) {
+  if (use_poly && bas_ei && bas_ej) {
+    int z = pp_at(bas_ei[basis_index], bas_ej[basis_index]);
+    if (z >= 0)
+      return pp_S[z];
+  }
+  fe acc = 0;
+  for (int i = 0; i < nz_cnt; ++i) {
+    int k = nz_idx[i];
+    acc ^= mul(recv[k], basis_value_at(basis_index, k));
+  }
+  return acc;
 }
 typedef struct {
   int i, j, w, depth;
@@ -2181,7 +2637,10 @@ static int poly_setup(int e, int Mx, NBas *B) {
         if (n0 == cap) {
           cap *= 2;
           PPt *tmp = realloc(P, cap * sizeof *P);
-          if (!tmp) { free(P); return -1; }
+          if (!tmp) {
+            free(P);
+            return -1;
+          }
           P = tmp;
         }
         P[n0].i = i;
@@ -2233,7 +2692,10 @@ static int poly_setup(int e, int Mx, NBas *B) {
           if (n0 == cap) {
             cap *= 2;
             PPt *tmp = realloc(P, cap * sizeof *P);
-            if (!tmp) { free(P); return -1; }
+            if (!tmp) {
+              free(P);
+              return -1;
+            }
             P = tmp;
           }
           P[n0].i = i;
@@ -2275,10 +2737,14 @@ static int poly_setup(int e, int Mx, NBas *B) {
   /* 3. box index (unsorted) */
   int imin = 1 << 30, imax = -(1 << 30), jmin = 1 << 30, jmax = -(1 << 30);
   for (size_t p = 0; p < n0; ++p) {
-    if (P[p].i < imin) imin = P[p].i;
-    if (P[p].i > imax) imax = P[p].i;
-    if (P[p].j < jmin) jmin = P[p].j;
-    if (P[p].j > jmax) jmax = P[p].j;
+    if (P[p].i < imin)
+      imin = P[p].i;
+    if (P[p].i > imax)
+      imax = P[p].i;
+    if (P[p].j < jmin)
+      jmin = P[p].j;
+    if (P[p].j > jmax)
+      jmax = P[p].j;
   }
   pp_bi0 = imin;
   pp_bj0 = jmin;
@@ -2398,12 +2864,14 @@ static int poly_setup(int e, int Mx, NBas *B) {
       pp_ws[pp_w[p]] = (int)p;
     pp_we[pp_w[p]] = (int)p + 1;
   }
-  { int cum = 0;
+  {
+    int cum = 0;
     for (int w = 0; w <= Mx; ++w) {
       if (pp_we[w] > 0)
         cum = pp_we[w];
       pp_upto[w] = cum;
-    } }
+    }
+  }
   /* 7. the basis = the independent points; B in pole-order order */
   for (int k = 0; k < B->n; ++k) {
     int r = pp_rep[B->rho[k]];
@@ -2636,9 +3104,9 @@ static int decode_fr_vote(Result *R, int verbose, int quiet) {
   memset(R, 0, sizeof *R);
   R->vote_min_margin = 1 << 30;
   if (!use_poly) {
-    fprintf(stderr,
-            "FR-VOTE requires the Newton monomial syndrome path; "
-            "enable it with the default Newton setup (do not use -nopoly/-nonewton).\n");
+    fprintf(stderr, "FR-VOTE requires the Newton monomial syndrome path; "
+                    "enable it with the default Newton setup (do not use "
+                    "-nopoly/-nonewton).\n");
     R->failed = 1;
     return -1;
   }
@@ -2713,7 +3181,8 @@ static int decode_fr_vote(Result *R, int verbose, int quiet) {
       if (z < 0 || z >= pp_upto[b]) {
         fprintf(stderr,
                 "FR-VOTE: locator coefficient is outside Newton table "
-                "(b=%d, basis=%d, index=%d).\n", b, k, z);
+                "(b=%d, basis=%d, index=%d).\n",
+                b, k, z);
         R->failed = 1;
         bms_cleanup();
         return -1;
@@ -2724,7 +3193,9 @@ static int decode_fr_vote(Result *R, int verbose, int quiet) {
   }
 
   if (ngen == 0) {
-    fprintf(stderr, "FR-VOTE: no locator generators were obtained from the FR kernel.\n");
+    fprintf(
+        stderr,
+        "FR-VOTE: no locator generators were obtained from the FR kernel.\n");
     R->failed = 1;
     return -1;
   }
@@ -2751,13 +3222,13 @@ static int decode_fr_vote(Result *R, int verbose, int quiet) {
            ngen, nsel, M_EXT - 2 * GENUS + 1 - R->T);
     printf("# FR-VOTE: staircase of %d elements; %d voted syndromes, "
            "smallest margin %d, %d wrong, %d ties\n",
-           R->T, R->vote_steps, R->vote_min_margin,
-           R->vote_wrong, R->vote_tie);
+           R->T, R->vote_steps, R->vote_min_margin, R->vote_wrong, R->vote_tie);
   }
 
   t0 = now();
   if (nsel == 0) {
-    fprintf(stderr, "FR-VOTE: no locator generators satisfy the Feng-Rao bound.\n");
+    fprintf(stderr,
+            "FR-VOTE: no locator generators satisfy the Feng-Rao bound.\n");
     R->failed = 1;
     bms_cleanup();
     return -1;
@@ -2896,7 +3367,8 @@ static int bms_run(Result *R, int nmax, int verbose) {
             fprintf(stderr, "BMS: inconsistent state (n=%d, b=%d)\n", n, b);
             return -1;
           }
-          vaxpy_b(ng[nn].f, mul(ng[nn].d, inv(pivd[m])), pivvec[m], use_poly ? pivb[m] : 0);
+          vaxpy_b(ng[nn].f, mul(ng[nn].d, inv(pivd[m])), pivvec[m],
+                  use_poly ? pivb[m] : 0);
           ng[nn].d = 0;
         }
       }
@@ -3036,8 +3508,10 @@ static void set_received(fe *r) {
       checked = 1;
       int bad = poly_selfcheck();
       if (bad)
-        fprintf(stderr, "# WARNING: monomial relation self-check failed at %d "
-                        "points\n", bad);
+        fprintf(stderr,
+                "# WARNING: monomial relation self-check failed at %d "
+                "points\n",
+                bad);
     }
   }
 }
@@ -3096,7 +3570,8 @@ static int solve_values(const fe *VG, int rG, const fe *sigma, const int *Z,
 
 /* ---- what parameters does this build / this curve handle? ---- */
 static int limit_Mmax(int g, int n) {
-  int mm = n - g - 2; /* M+g <= n-2: injective evaluation, one point may be dropped */
+  int mm = n - g -
+           2; /* M+g <= n-2: injective evaluation, one point may be dropped */
   if (mm > MAXB - 2)
     mm = MAXB - 2; /* basis array holds M+1 functions */
   return mm;
@@ -3136,7 +3611,8 @@ static void usage(void) {
       "  --m m            base field GF(2^m), m <= 11            (default 6)\n"
       "  --poly 0x43      primitive polynomial of GF(2^m)       (default: "
       "standard)\n"
-      "  --curve bbgs|hermitian  select a built-in curve family (default bbgs)\n"
+      "  --curve bbgs|hermitian  select a built-in curve family (default "
+      "bbgs)\n"
       "  --q auto|2|4|8   family parameter q (power of 2)\n"
       "auto: q^3 = 2^m if m%3==0, else q=4\n"
       "  --terms \"16,0;0,1;15,4;12,16\"   custom X-monic curve instead (X^i "
@@ -3151,12 +3627,17 @@ static void usage(void) {
       "  --pole \"E2:140,E1:85\" or \"#3:100\"   multi-point divisor (E<k>: "
       "edge, #k: orbit)\n"
       "  -fr -bms -vote   one-point decoders to run (default: all)\n"
-      "  -frvote          pure Feng-Rao majority voting (Newton path; no BMS, no dual basis)\n"
-      "  -strict          skip FR/BMS when t exceeds the basic bound tau (default: run them anyway)\n"
-      "  -limits          print the parameter limits of this build/curve and exit\n"
+      "  -frvote          pure Feng-Rao majority voting (Newton path; no BMS, "
+      "no dual basis)\n"
+      "  -strict          skip FR/BMS when t exceeds the basic bound tau "
+      "(default: run them anyway)\n"
+      "  -limits          print the parameter limits of this build/curve and "
+      "exit\n"
       "  -basic           (multi-point) basic algorithm\n"
-      "  -allplaces       one-point: also evaluate the slow (Laurent-expansion) places and keep the best d_FR\n"
-      "  -nonewton        one-point: build the basis by Laurent expansions (old, slow) instead of the Newton polygon\n"
+      "  -allplaces       one-point: also evaluate the slow "
+      "(Laurent-expansion) places and keep the best d_FR\n"
+      "  -nonewton        one-point: build the basis by Laurent expansions "
+      "(old, slow) instead of the Newton polygon\n"
       "  --place k        also avoids probing every candidate place (saves "
       "setup time)\n"
       "  -n N             N random trials (summary only)       -v  votes     "
@@ -3170,12 +3651,15 @@ int ag_frvote_run(int argc, char **argv) {
       place_req = -1, trials = 1, verbose = 0, only_list = 0, Jstep = 16,
       Jmax = 700;
   unsigned poly = 0, seed = 1;
-  int run_fr = 1, run_bms = 1, run_vote = 1, run_frvote = 0, only = 0, nerr = 256, force = 1;
+  int run_fr = 1, run_bms = 1, run_vote = 1, run_frvote = 0, only = 0,
+      nerr = 256, force = 1;
   for (int i = 1; i < argc; ++i) {
     { /* accept --force / --fr / --bms / --vote / --basic / --list as well as
          -force ... */
-      static const char *flags[] = {"half",  "force", "fr", "bms", "vote", "frvote",
-                                    "basic", "list",  "v",  "nonewton", "allplaces", "strict", "limits", "nopoly", NULL};
+      static const char *flags[] = {"half",   "force",    "fr",        "bms",
+                                    "vote",   "frvote",   "basic",     "list",
+                                    "v",      "nonewton", "allplaces", "strict",
+                                    "limits", "nopoly",   NULL};
       if (argv[i][0] == '-' && argv[i][1] == '-')
         for (int f = 0; flags[f]; ++f)
           if (!strcmp(argv[i] + 2, flags[f])) {
@@ -3252,8 +3736,16 @@ int ag_frvote_run(int argc, char **argv) {
     } else
       seed = (unsigned)strtoul(argv[i], NULL, 10);
   }
-  if (api_mode && (polespec != NULL || !run_frvote || run_fr || run_bms || run_vote)) {
-    fprintf(stderr, "API mode supports only one-point Newton FR-VOTE; use -frvote alone and do not set --pole.\n");
+  if (run_frvote && run_fr) {
+    fprintf(stderr, "-frvote cannot be combined with -fr: FR-VOTE keeps no "
+                    "basis-value table and only the minimal locator rows.\n");
+    return 1;
+  }
+  compact_fr_mode = run_frvote;
+  if (api_mode &&
+      (polespec != NULL || !run_frvote || run_fr || run_bms || run_vote)) {
+    fprintf(stderr, "API mode supports only one-point Newton FR-VOTE; use "
+                    "-frvote alone and do not set --pole.\n");
     return 1;
   }
   if (m_bits < 1 || m_bits > 11) {
@@ -3302,7 +3794,7 @@ int ag_frvote_run(int argc, char **argv) {
       terms = tbuf;
       qfam = q;
       printf("# BBGS curve: X^%d + Y + X^%d Y^%d + X^%d Y^%d = 0 (q=%d)\n",
-             q*q, q*q-1, q, q*q-q, q*q, q);
+             q * q, q * q - 1, q, q * q - q, q * q, q);
     } else {
       fprintf(stderr, "--curve must be bbgs or hermitian (or use --terms)\n");
       return 1;
@@ -3757,22 +4249,22 @@ int ag_frvote_run(int argc, char **argv) {
   else
     printf("# chosen pole: place #%d  (d_FR = %d, designed t = %d)\n", best,
            bestdfr, (bestdfr - 1) / 2);
-if (via_newton[best] && use_poly_opt) {
-  int e = best >= MAXORB ? best - MAXORB : pl[best].edge;
-  if (poly_setup(e, M_EXT, &NB[best]) == 0) {
-    use_poly = 1;
-    bas_ei = NB[best].ei;   /* poly_setup の後 */
-    bas_ej = NB[best].ej;
+  if (via_newton[best] && use_poly_opt) {
+    int e = best >= MAXORB ? best - MAXORB : pl[best].edge;
+    if (poly_setup(e, M_EXT, &NB[best]) == 0) {
+      use_poly = 1;
+      bas_ei = NB[best].ei; /* poly_setup の後 */
+      bas_ej = NB[best].ej;
       if (hermitian_q > 0)
         printf("# Hermitian monomial syndrome tables on %d polynomial "
-               "semigroup points (no dual basis)\n", NPT);
+               "semigroup points (no dual basis)\n",
+               NPT);
       else
         printf("# monomial syndrome tables on %d lattice points of the Newton "
                "cone (no dual basis, f kept as monomial coefficients)\n",
                NPT);
+    }
   }
-}
-
 
   if (via_newton[best]) {
     /* ---- basis straight from the lattice points: monomials x^i y^j ---- */
@@ -3788,7 +4280,8 @@ if (via_newton[best] && use_poly_opt) {
         api_owned_received = malloc(sizeof(fe) * (size_t)original_npts);
         api_position_map = malloc(sizeof(size_t) * (size_t)original_npts);
         if (!api_owned_received || !api_position_map) {
-          fprintf(stderr, "API allocation failed while puncturing Laurent positions\n");
+          fprintf(stderr,
+                  "API allocation failed while puncturing Laurent positions\n");
           return 1;
         }
       }
@@ -3810,18 +4303,34 @@ if (via_newton[best] && use_poly_opt) {
              npts - k, k);
       npts = k;
       if (npts <= M_EXT) {
-        fprintf(stderr,
-                "# only n = %d positions left, but M + g = %d >= n.\n", npts,
-                M_EXT);
+        fprintf(stderr, "# only n = %d positions left, but M + g = %d >= n.\n",
+                npts, M_EXT);
         return 1;
       }
     }
     nbasis = B->n;
-    for (int i = 0; i < B->n; ++i) {
-      basis[i].rho = B->rho[i];
-      basis[i].val = malloc(sizeof(fe) * npts);
-      for (int k = 0; k < npts; ++k)
-        basis[i].val[k] = mono_eval(PXv[k], PYv[k], B->ei[i], B->ej[i]);
+    if (run_frvote) {
+      /* FR-VOTE's Newton syndrome path only needs monomial exponents and
+       * point coordinates.  Do not allocate nbasis*npts field elements;
+       * selected error positions are evaluated on demand. */
+      for (int i = 0; i < B->n; ++i) {
+        basis[i].rho = B->rho[i];
+        basis[i].val = NULL;
+      }
+    } else {
+      int *lxs = malloc(sizeof(int) * (size_t)npts);
+      int *lys = malloc(sizeof(int) * (size_t)npts);
+      for (int k = 0; k < npts; ++k) {
+        lxs[k] = PXv[k] ? (int)glog[PXv[k]] : -1;
+        lys[k] = PYv[k] ? (int)glog[PYv[k]] : -1;
+      }
+      for (int i = 0; i < B->n; ++i) {
+        basis[i].rho = B->rho[i];
+        basis[i].val = malloc(sizeof(fe) * npts);
+        mono_eval_row(basis[i].val, npts, lxs, lys, B->ei[i], B->ej[i]);
+      }
+      free(lxs);
+      free(lys);
     }
   } else {
     LSp *L = &Lc[best];
@@ -3842,12 +4351,11 @@ if (via_newton[best] && use_poly_opt) {
       nbasis = dim;
       for (int i = 0; i < dim; ++i) {
         basis[i].rho = pv[best][ord[i]];
-        basis[i].val = malloc(sizeof(fe) * npts);
-        if (i == 0)
-          for (int k = 0; k < npts; ++k)
-            basis[0].val[k] = 1;
-        else
-          memcpy(basis[i].val, V + (size_t)ord[i] * npts, sizeof(fe) * npts);
+        /* V is already a contiguous dim x npts evaluation matrix.  Point
+         * directly into its rows instead of allocating/copying every row.
+         * This also fixes the former leak of V and halves this phase's peak
+         * evaluation-storage requirement. */
+        basis[i].val = V + (size_t)ord[i] * (size_t)npts;
       }
       free(ord);
     }
@@ -3855,7 +4363,8 @@ if (via_newton[best] && use_poly_opt) {
   init_semigroup();
   ASHIFT = basis[1].rho;
   ROW_MAX = M_SYND - ASHIFT;
-  build_omega_buckets();
+  if (!run_frvote)
+    build_omega_buckets();
   nz_idx = malloc(sizeof(int) * npts);
   printf("# setup (curve, places, basis up to M+g, evaluation): %.2f s;  "
          "semigroup has %d generators, smallest pole %d\n",
@@ -3877,7 +4386,8 @@ if (via_newton[best] && use_poly_opt) {
   for (int tr = 0; tr < trials; ++tr) {
     if (api_mode) {
       if (!run_frvote || run_fr || run_bms || run_vote) {
-        fprintf(stderr, "API mode requires -frvote alone (do not enable -fr/-bms/-vote).\n");
+        fprintf(stderr, "API mode requires -frvote alone (do not enable "
+                        "-fr/-bms/-vote).\n");
         return 1;
       }
       if (api_received_len != (size_t)npts) {
@@ -3887,16 +4397,17 @@ if (via_newton[best] && use_poly_opt) {
       }
       for (int k = 0; k < npts; ++k) {
         if (api_received[k] >= FS) {
-          fprintf(stderr, "API received[%d]=%u is outside GF(2^%d)\n",
-                  k, (unsigned)api_received[k], FM);
+          fprintf(stderr, "API received[%d]=%u is outside GF(2^%d)\n", k,
+                  (unsigned)api_received[k], FM);
           return 1;
         }
       }
       memcpy(r, api_received, sizeof(fe) * (size_t)npts);
       set_received(r);
-      if (decode_fr_vote(&res_frvote, verbose, 0) != 0 ||
-          res_frvote.failed || !res_frvote.resolved) {
-        fprintf(stderr, "API FR-VOTE decoding failed or error values unresolved.\n");
+      if (decode_fr_vote(&res_frvote, verbose, 0) != 0 || res_frvote.failed ||
+          !res_frvote.resolved) {
+        fprintf(stderr,
+                "API FR-VOTE decoding failed or error values unresolved.\n");
         return 2;
       }
       if ((size_t)res_frvote.nfound > api_output_capacity) {
@@ -3906,8 +4417,8 @@ if (via_newton[best] && use_poly_opt) {
       }
       for (int k = 0; k < res_frvote.nfound; ++k) {
         api_error_positions[k] = api_position_map
-            ? api_position_map[res_frvote.pos[k]]
-            : (size_t)res_frvote.pos[k];
+                                     ? api_position_map[res_frvote.pos[k]]
+                                     : (size_t)res_frvote.pos[k];
         api_error_values[k] = res_frvote.val[k];
       }
       *api_error_count = (size_t)res_frvote.nfound;
@@ -3920,7 +4431,8 @@ if (via_newton[best] && use_poly_opt) {
       printf("# %d errors injected (seed %u)%s\n", NUM_ERRORS, seed,
              NUM_ERRORS > TAU ? "  -- beyond the basic bound" : "");
     if (force && NUM_ERRORS > TAU && !quiet && (run_fr || run_bms))
-      puts("# FR/BMS: t exceeds the proven basic bound; running anyway (expected to "
+      puts("# FR/BMS: t exceeds the proven basic bound; running anyway "
+           "(expected to "
            "fail)");
     int okf = 1, okb = 1, okv = 1, okfv = 1;
     if (run_frvote) {
@@ -3967,7 +4479,8 @@ if (via_newton[best] && use_poly_opt) {
         printf("# time VOTE : BMS+voting %.3f s, scan %.3f s, values %.3f s\n",
                res_vote.t_main, res_vote.t_extract, res_vote.t_resolve);
       if (run_frvote)
-        printf("# time FR-VOTE: FR-kernel+voting %.3f s, scan %.3f s, values %.3f s\n",
+        printf("# time FR-VOTE: FR-kernel+voting %.3f s, scan %.3f s, values "
+               "%.3f s\n",
                res_frvote.t_main, res_frvote.t_extract, res_frvote.t_resolve);
       if (run_fr && run_vote && (NUM_ERRORS <= TAU || force) && !res_fr.failed)
         printf("# FR / VOTE time ratio: %.1f x\n",
@@ -3979,8 +4492,7 @@ if (via_newton[best] && use_poly_opt) {
              (run_bms && bo) ? (okb ? "ok" : "FAIL") : "n/a",
              run_vote ? (okv ? "ok" : "FAIL") : "n/a");
       if (run_frvote)
-        printf("# trial %d: FR-VOTE %s\n", tr + 1,
-               okfv ? "ok" : "FAIL");
+        printf("# trial %d: FR-VOTE %s\n", tr + 1, okfv ? "ok" : "FAIL");
     }
   }
   if (trials > 1) {
@@ -4039,7 +4551,5 @@ int ag_frvote_decode(int argc, char **argv, const uint16_t *received,
 }
 
 #ifndef AG_FRVOTE_NO_MAIN
-int main(int argc, char **argv) {
-  return ag_frvote_run(argc, argv);
-}
+int main(int argc, char **argv) { return ag_frvote_run(argc, argv); }
 #endif
