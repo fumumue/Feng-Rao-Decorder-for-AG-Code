@@ -4,14 +4,14 @@ LDLIBS  ?= -lm
 
 all: ag_frvote libag_frvote.a external_caller
 
-ag_frvote: bbgs.c
+ag_frvote: ketter.c
 	$(CC) $(CFLAGS) -o $@ $< $(LDLIBS)
 
 libag_frvote.a: ag_frvote_lib.o
 	ar rcs $@ $^
 
-ag_frvote_lib.o: bbgs.c ag_frvote.h
-	$(CC) $(CFLAGS) -DAG_FRVOTE_NO_MAIN -c -o $@ bbgs.c
+ag_frvote_lib.o: ketter.c ag_frvote.h
+	$(CC) $(CFLAGS) -DAG_FRVOTE_NO_MAIN -c -o $@ ketter.c
 
 external_caller: external_caller.c libag_frvote.a ag_frvote.h
 	$(CC) $(CFLAGS) -o $@ external_caller.c libag_frvote.a $(LDLIBS)
