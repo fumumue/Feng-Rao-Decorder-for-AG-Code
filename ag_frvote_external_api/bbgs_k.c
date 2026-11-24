@@ -29,10 +29,10 @@ typedef uint16_t fe;
 
 /* EXTENSION_POINT: algorithmic/memory capacities. Raising m alone is not
  * sufficient; audit these limits against genus, point count and M first. */
-#define MAXB 70000     /* max number of basis functions (M+1)          */
-#define MAXT 3000      /* max number of errors                         */
-#define MAXGEN 100     /* max generators of the ideal E                */
-#define MAXGENUS 33000 /* max genus handled by the voting part         */
+#define MAXB 400000      /* max number of basis functions (M+1)          */
+#define MAXT 3000        /* max number of errors                         */
+#define MAXGEN 100       /* max generators of the ideal E                */
+#define MAXGENUS 1310006 /* max genus handled by the voting part         */
 #define SGMAX (MAXB + MAXGENUS + 64)
 #define MAXTERM 64 /* EXTENSION_POINT: sparse curve term capacity   */
 #define MAXEDGE 32 /* EXTENSION_POINT: Newton polygon edge capacity */
