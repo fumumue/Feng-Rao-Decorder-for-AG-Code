@@ -1,4 +1,4 @@
-# `noizy.c / AG Code Generator / AG Code Analyzer` 使用マニュアル
+# `noize / AG Code Generator / AG Code Analyzer` 使用マニュアル
 
 この文書は、2026-11-25 時点で確認した
 `noizy.c`（約7693行）のソースコードをもとに、ビルド方法、曲線・符号の指定、復号方式、実験方法をまとめたものです。
