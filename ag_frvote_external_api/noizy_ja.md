@@ -61,20 +61,20 @@ FRで誤り位置を抽出した後の誤り値計算は、次のように選択
 
 ``` sh
 cc -O2 -std=gnu11 -Wall -Wextra -fopenmp \
-   -o ag_frvote noizy.c -lm
+   -o noize noizy.c -lm
 ```
 
 OpenMPを使わない環境では `-fopenmp` を外してビルドできます。
 
 ``` sh
 cc -O2 -std=gnu11 -Wall -Wextra \
-   -o ag_frvote noizy.c -lm
+   -o noize noizy.c -lm
 ```
 
 実行ファイルができたら、まずヘルプを確認します。
 
 ``` sh
-./ag_frvote --help
+./noize --help
 ```
 
 AVX2によるFR行更新は `-fr-simd`
@@ -83,7 +83,7 @@ AVX2によるFR行更新は `-fr-simd`
 ## 3. 基本的な実行
 
 ``` sh
-./ag_frvote
+./noize
 ```
 
 引数なしでは、デフォルトのBBGS曲線を構成し、一点符号についてFR・BMS・VOTEを実行します。乱数seedのデフォルトは
@@ -92,8 +92,8 @@ AVX2によるFR行更新は `-fr-simd`
 最初は、点数・種数・場所・利用可能なパラメータ上限だけを確認するのが安全です。
 
 ``` sh
-./ag_frvote -list
-./ag_frvote -limits
+./noize -list
+./noize -limits
 ```
 
 これらは診断情報を表示して終了します。復号実験は行いません。
@@ -141,7 +141,7 @@ AVX2によるFR行更新は `-fr-simd`
 ### 5.1 BBGS曲線（デフォルト）
 
 ``` sh
-./ag_frvote --curve bbgs --m 6 --a 1 --b 2
+./noize --curve bbgs --m 6 --a 1 --b 2
 ```
 
 BBGS曲線は `a,b` を正の互いに素な整数として指定します。`c=a+b`
@@ -160,10 +160,10 @@ BBGS曲線は `a,b` を正の互いに素な整数として指定します。`c=
 
 ``` sh
 # c=3, m=6 なので q=4
-./ag_frvote --curve bbgs --m 6 --a 1 --b 2
+./noize --curve bbgs --m 6 --a 1 --b 2
 
 # q=8, c=3 なので GF(2^9)
-./ag_frvote --curve bbgs --m 9 --q 8 --a 1 --b 2
+./noize --curve bbgs --m 9 --q 8 --a 1 --b 2
 ```
 
 `--q auto` は `--q` を省略した場合と同じく自動決定を要求します。
@@ -171,7 +171,7 @@ BBGS曲線は `a,b` を正の互いに素な整数として指定します。`c=
 ### 5.2 Hermitian曲線
 
 ``` sh
-./ag_frvote --curve hermitian --m 6 --q 4
+./noize --curve hermitian --m 6 --q 4
 ```
 
 実装されている形は
@@ -184,7 +184,7 @@ BBGS曲線は `a,b` を正の互いに素な整数として指定します。`c=
 ### 5.3 Suzuki曲線
 
 ``` sh
-./ag_frvote --curve suzuki --m 9 --q 8 --errors 20 -n 10
+./noize --curve suzuki --m 9 --q 8 --errors 20 -n 10
 ```
 
 Suzuki曲線は専用の復号エンジンで処理されます。`q=2^(2n+1)`
@@ -197,7 +197,7 @@ Suzuki経路は通常の平面曲線処理とは別実装です。`--M`、`--err
 ### 5.4 独自の平面曲線 `--terms`
 
 ``` sh
-./ag_frvote --m 6 \
+./noize --m 6 \
   --terms "16,0;0,1;15,4;12,16"
 ```
 
@@ -267,7 +267,7 @@ Suzuki経路は通常の平面曲線処理とは別実装です。`--M`、`--err
 最後に数値を1つ置くと乱数seedになります。
 
 ``` sh
-./ag_frvote --errors 100 12345
+./noize --errors 100 12345
 ```
 
 同じ設定とseedで再現実験を行うために利用します。
@@ -366,31 +366,31 @@ Suzuki経路は通常の平面曲線処理とは別実装です。`--M`、`--err
 ### FRだけ
 
 ``` sh
-./ag_frvote --errors 100 -fr
+./noize --errors 100 -fr
 ```
 
 ### BMSだけ
 
 ``` sh
-./ag_frvote --errors 100 -bms
+./noize --errors 100 -bms
 ```
 
 ### Feng--Rao多数決だけ
 
 ``` sh
-./ag_frvote --errors 100 -vote
+./noize --errors 100 -vote
 ```
 
 ### FRとBMSを比較
 
 ``` sh
-./ag_frvote --errors 100 -fr -bms
+./noize --errors 100 -fr -bms
 ```
 
 ### FR-VOTEだけ
 
 ``` sh
-./ag_frvote --errors 100 -frvote
+./noize --errors 100 -frvote
 ```
 
 FR-VOTEはNewton基底を使う軽量経路で、通常のFRとは保持するデータ構造が異なります。`-fr`
@@ -399,7 +399,7 @@ FR-VOTEはNewton基底を使う軽量経路で、通常のFRとは保持する�
 ### SIMDを要求
 
 ``` sh
-./ag_frvote --errors 100 -fr -fr-simd
+./noize --errors 100 -fr -fr-simd
 ```
 
 `-fr-simd`
@@ -408,13 +408,13 @@ FR-VOTEはNewton基底を使う軽量経路で、通常のFRとは保持する�
 ### Forney関数による誤り値計算
 
 ``` sh
-./ag_frvote --errors 100 -fr -forney
+./noize --errors 100 -fr -forney
 ```
 
 ### Kötter＋一般化Forney公式
 
 ``` sh
-./ag_frvote --errors 100 -fr -kotter
+./noize --errors 100 -fr -kotter
 ```
 
 Kötter経路は、曲線・場所に対するモジュール構成ができない場合に停止することがあります。最初は小さいパラメータで動作確認してください。
@@ -422,7 +422,7 @@ Kötter経路は、曲線・場所に対するモジュール構成ができな�
 ### 誤り値も表示
 
 ``` sh
-./ag_frvote --errors 20 -fr -show-values
+./noize --errors 20 -fr -show-values
 ```
 
 `-show-values`
@@ -431,7 +431,7 @@ Kötter経路は、曲線・場所に対するモジュール構成ができな�
 ### locatorの零点数を表示
 
 ``` sh
-./ag_frvote --errors 20 -fr -show-locator-counts
+./noize --errors 20 -fr -show-locator-counts
 ```
 
 locatorごとの零点数に関する診断情報を表示します。
@@ -467,7 +467,7 @@ locatorごとの零点数に関する診断情報を表示します。
 ### 11.1 まず曲線と場所を確認
 
 ``` sh
-./ag_frvote --curve bbgs --m 9 --a 1 --b 2 -list
+./noize --curve bbgs --m 9 --a 1 --b 2 -list
 ```
 
 出力から次を確認します。
@@ -483,7 +483,7 @@ locatorごとの零点数に関する診断情報を表示します。
 ### 11.2 小さい誤り数で復号の動作確認
 
 ``` sh
-./ag_frvote --curve bbgs --m 9 --a 1 --b 2 \
+./noize --curve bbgs --m 9 --a 1 --b 2 \
   --errors 10 -n 3 -show-values 12345
 ```
 
@@ -493,7 +493,7 @@ trialを実行します。最初は小さな誤り数にして、成功率と誤
 ### 11.3 FRとBMSの比較
 
 ``` sh
-./ag_frvote --curve bbgs --m 9 --a 1 --b 2 \
+./noize --curve bbgs --m 9 --a 1 --b 2 \
   --errors 50 -fr -bms -n 10 12345
 ```
 
@@ -503,13 +503,13 @@ trialを実行します。最初は小さな誤り数にして、成功率と誤
 
 ``` sh
 # 標準の消去法
-./ag_frvote --errors 50 -fr 12345
+./noize --errors 50 -fr 12345
 
 # 多変数Forney関数
-./ag_frvote --errors 50 -fr -forney 12345
+./noize --errors 50 -fr -forney 12345
 
 # Kötter＋一般化Forney
-./ag_frvote --errors 50 -fr -kotter 12345
+./noize --errors 50 -fr -kotter 12345
 ```
 
 3つの実験で曲線、体、評価点数、`M`、誤り数、seedを一致させます。復号成否だけでなく、出力される
@@ -520,13 +520,13 @@ trialを実行します。最初は小さな誤り数にして、成功率と誤
 まず場所一覧を出します。
 
 ``` sh
-./ag_frvote --curve bbgs --m 9 --a 1 --b 2 -list
+./noize --curve bbgs --m 9 --a 1 --b 2 -list
 ```
 
 次に、表示された辺・場所番号を使って因子を指定します。
 
 ``` sh
-./ag_frvote --curve bbgs --m 9 --a 1 --b 2 \
+./noize --curve bbgs --m 9 --a 1 --b 2 \
   --errors 20 --pole "E2:100"
 ```
 
@@ -634,24 +634,24 @@ notes:
 ``` sh
 # ビルド
 cc -O2 -std=gnu11 -Wall -Wextra -fopenmp \
-   -o ag_frvote noizy.c -lm
+   -o noize noizy.c -lm
 
 # ヘルプ
-./ag_frvote --help
+./noize --help
 
 # 曲線・場所・上限の確認
-./ag_frvote --curve bbgs --m 9 --a 1 --b 2 -list
+./noize --curve bbgs --m 9 --a 1 --b 2 -list
 
 # FR/BMS/VOTEの標準比較
-./ag_frvote --curve bbgs --m 9 --a 1 --b 2 \
+./noize --curve bbgs --m 9 --a 1 --b 2 \
   --errors 50 -fr -bms -vote -n 10 12345
 
 # FR-VOTE
-./ag_frvote --curve bbgs --m 9 --a 1 --b 2 \
+./noize --curve bbgs --m 9 --a 1 --b 2 \
   --errors 50 -frvote 12345
 
 # Kötter＋一般化Forney公式
-./ag_frvote --curve bbgs --m 9 --a 1 --b 2 \
+./noize --curve bbgs --m 9 --a 1 --b 2 \
   --errors 50 -fr -kotter 12345
 ```
 
