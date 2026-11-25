@@ -1,5 +1,5 @@
 /*
- * ag_frvote.c -- one-point AG-code FR-VOTE for supported plane curves over
+ * noize.c -- one-point AG-code FR-VOTE for supported plane curves over
  * GF(2^m)
  *
  *   * one-point codes at a rational place at infinity: the basis of L(MP) is
@@ -5594,7 +5594,7 @@ static void print_limits(int g, int n, int t) {
 
 static void usage(void) {
   puts(
-      "ag_frvote [options] [seed]\n"
+      "noize [options] [seed]\n"
       "  --m m            base field GF(2^m), m <= 12             (default 6)\n"
       "  --poly 0x43      primitive polynomial of GF(2^m)       (default: "
       "standard)\n"
@@ -6614,7 +6614,7 @@ static int any_newton_place(int g) {
     }
   return 0;
 }
-int ag_frvote_run(int argc, char **argv) {
+int noize_run(int argc, char **argv) {
   const char *terms = "16,0;0,1;15,4;12,16", *polespec = NULL;
   const char *curve_name = "bbgs";
   int len_req = -1, half = 0, q_req = -1, terms_set = 0, m_bits = 6, Mreq = -1,
@@ -7655,7 +7655,7 @@ int ag_frvote_run(int argc, char **argv) {
     free(NB[best].rho); /* ei/ej stay referenced by bas_ei/bas_ej */
   return 0;
 }
-int ag_frvote_decode(int argc, char **argv, const uint16_t *received,
+int noize_decode(int argc, char **argv, const uint16_t *received,
                      size_t received_len, size_t *error_positions,
                      uint16_t *error_values, size_t output_capacity,
                      size_t *error_count) {
@@ -7673,7 +7673,7 @@ int ag_frvote_decode(int argc, char **argv, const uint16_t *received,
   api_completed = 0;
   api_owned_received = NULL;
   api_position_map = NULL;
-  int rc = ag_frvote_run(argc, argv);
+  int rc = noize_run(argc, argv);
   free(api_owned_received);
   free(api_position_map);
   api_owned_received = NULL;
@@ -7688,6 +7688,6 @@ int ag_frvote_decode(int argc, char **argv, const uint16_t *received,
   return api_completed ? 0 : -10;
 }
 
-#ifndef AG_FRVOTE_NO_MAIN
-int main(int argc, char **argv) { return ag_frvote_run(argc, argv); }
+#ifndef noize_NO_MAIN
+int main(int argc, char **argv) { return noize_run(argc, argv); }
 #endif
