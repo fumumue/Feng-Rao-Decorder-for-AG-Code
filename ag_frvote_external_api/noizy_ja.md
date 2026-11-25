@@ -1,7 +1,7 @@
-# `fr_simd.c` / `ag_frvote` 使用マニュアル
+# `noizy.c`  使用マニュアル
 
 この文書は、2026-11-25 時点で確認した
-`fr_simd.c`（約6,930行）のソースコードをもとに、ビルド方法、曲線・符号の指定、復号方式、実験方法をまとめたものです。
+`noizy.c`（約6,930行）のソースコードをもとに、ビルド方法、曲線・符号の指定、復号方式、実験方法をまとめたものです。
 
 > **注意**\
 > 本書はソースコードの引数処理・実装コメント・実行フローを読んで作成した操作マニュアルです。ここに記載した全コマンドを実機で再ビルド・実行して検証したわけではありません。特に、独自曲線
@@ -14,7 +14,7 @@
 
 主な機能は次のとおりです。
 
--   有限体 (`\mathbb `{=tex}F\_{2\^m}) の演算（このビルドでは
+-   有限体 ($`\mathbb `{=tex}F\_{2\^m}$) の演算（このビルドでは
     (1`\le `{=tex}m`\le12`{=tex})）。
 -   BBGS曲線、Hermitian曲線、Suzuki曲線、および条件を満たすユーザー指定の疎な平面曲線。
 -   Newton多角形からの種数計算、無限遠の辺と場所（Galois軌道）の解析。
@@ -57,18 +57,18 @@ FRで誤り位置を抽出した後の誤り値計算は、次のように選択
 
 ## 2. ビルド
 
-ソースファイル名を `fr_simd.c` とした場合：
+ソースファイル名を `noizy.c` とした場合：
 
 ``` sh
 cc -O2 -std=gnu11 -Wall -Wextra -fopenmp \
-   -o ag_frvote fr_simd.c -lm
+   -o ag_frvote noizy.c -lm
 ```
 
 OpenMPを使わない環境では `-fopenmp` を外してビルドできます。
 
 ``` sh
 cc -O2 -std=gnu11 -Wall -Wextra \
-   -o ag_frvote fr_simd.c -lm
+   -o ag_frvote noizy.c -lm
 ```
 
 実行ファイルができたら、まずヘルプを確認します。
@@ -634,7 +634,7 @@ notes:
 ``` sh
 # ビルド
 cc -O2 -std=gnu11 -Wall -Wextra -fopenmp \
-   -o ag_frvote fr_simd.c -lm
+   -o ag_frvote noizy.c -lm
 
 # ヘルプ
 ./ag_frvote --help
