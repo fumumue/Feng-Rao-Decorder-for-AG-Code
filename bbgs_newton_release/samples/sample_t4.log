@@ -1,0 +1,18 @@
+Candidate search for terms=4, q=2 over GF(2^3):
+  genus=6: max-points a=1 b=2 n=29; Newton-basis candidate=a=1 b=2 n=29
+Selected basis-capable curve: a=1 b=2 genus=6 affine_points=29 (maximum points among basis-capable candidates)
+BBGS family: terms=4, q=2, a=1, b=2, c=3
+Field: GF(2^3), polynomial=0xB; required subfield GF(2^3)
+F(X,Y) = + X^3 Y^2 + X^2 Y^4 + Y^1 + X^4 = 0
+Newton polygon vertices (3): (0,1) (4,0) (2,4)
+Newton arithmetic genus g=6; toric nondegeneracy=PASS; M=11; RR target dim=6 (M>=2g-1)
+edge E0: start=(0,1), direction=(4,-1), lattice length=1, inward weight=(1,4) [primitive edge]
+edge E1: start=(4,0), direction=(-2,4), lattice length=2, inward weight=(-2,-1) [edge length > 1; branch decomposition needed]
+edge E2: start=(2,4), direction=(-2,-3), lattice length=1, inward weight=(3,-2) [primitive edge]
+Affine rational points over GF(2^3): 29
+Wrote points: sample_t4_q2_m3.points.tsv
+Newton basis E0: dimension=6, RR target=6, check=PASS, Laurent monomials
+Newton basis E2: dimension=6, RR target=6, check=PASS, Laurent monomials
+Basis status: PASS (all selected Newton/RR dimension checks passed)
+Wrote basis: sample_t4_q2_m3.basis.tsv
+Wrote metadata: sample_t4_q2_m3.meta.txt

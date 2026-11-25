@@ -1,0 +1,13 @@
+terms=10
+q=2
+m=9
+a=1
+b=8
+poly=0x211
+M=65279
+newton_arithmetic_genus=32640
+affine_rational_points=130817
+newton_toric_nondegenerate=1
+basis_dimension_formula_valid=1
+evaluation_note=Basis may contain negative exponents; exclude points with x=0 or y=0 from evaluation. points.tsv marks these with eval_nonzero_xy=0.
+basis_rr_dimension_checks=PASS

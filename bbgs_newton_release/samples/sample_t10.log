@@ -1,0 +1,20 @@
+Candidate search for terms=10, q=2 over GF(2^9):
+  genus=32640: max-points a=1 b=8 n=130817; Newton-basis candidate=a=1 b=8 n=130817
+  genus=32671: max-points a=2 b=7 n=130817; Newton-basis candidate=none (no primitive edge)
+  genus=32689: max-points a=4 b=5 n=130817; Newton-basis candidate=none (no primitive edge)
+Selected basis-capable curve: a=1 b=8 genus=32640 affine_points=130817 (maximum points among basis-capable candidates)
+BBGS family: terms=10, q=2, a=1, b=8, c=9
+Field: GF(2^9), polynomial=0x211; required subfield GF(2^9)
+F(X,Y) = + X^255 Y^2 + X^254 Y^4 + X^252 Y^8 + X^248 Y^16 + X^240 Y^32 + X^224 Y^64 + X^192 Y^128 + X^128 Y^256 + Y^1 + X^256 = 0
+Newton polygon vertices (3): (0,1) (256,0) (128,256)
+Newton arithmetic genus g=32640; toric nondegeneracy=PASS; M=65279; RR target dim=32640 (M>=2g-1)
+edge E0: start=(0,1), direction=(256,-1), lattice length=1, inward weight=(1,256) [primitive edge]
+edge E1: start=(256,0), direction=(-128,256), lattice length=128, inward weight=(-2,-1) [edge length > 1; branch decomposition needed]
+edge E2: start=(128,256), direction=(-128,-255), lattice length=1, inward weight=(255,-128) [primitive edge]
+Affine rational points over GF(2^9): 130817
+Wrote points: sample_t10_q2_m9.points.tsv
+Newton basis E0: dimension=32640, RR target=32640, check=PASS, Laurent monomials
+Newton basis E2: dimension=32640, RR target=32640, check=PASS, Laurent monomials
+Basis status: PASS (all selected Newton/RR dimension checks passed)
+Wrote basis: sample_t10_q2_m9.basis.tsv
+Wrote metadata: sample_t10_q2_m9.meta.txt

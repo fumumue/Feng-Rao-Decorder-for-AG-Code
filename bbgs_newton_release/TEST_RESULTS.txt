@@ -1,0 +1,13 @@
+PASS terms=4 q=2 m=3 points=29
+PASS terms=5 q=2 m=4 points=121
+PASS terms=6 q=2 m=5 points=497
+PASS terms=7 q=2 m=6 points=2017
+PASS terms=8 q=2 m=7 points=8129
+PASS terms=9 q=2 m=8 points=32641
+PASS terms=10 q=2 m=9 points=130817
+PASS terms=4 q=8 m=9 points=32705
+PASS terms=5 q=4 m=8 points=16321
+PASS terms=6 q=2 m=10 points=869
+PASS invalid field parameters rejected
+PASS genus-targeted selection
+PASS unsupported genus reported
