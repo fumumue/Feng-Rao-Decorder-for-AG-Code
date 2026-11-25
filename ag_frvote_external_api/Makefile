@@ -4,9 +4,14 @@ LDLIBS  ?= -lm
 
 all: ag_frvote libag_frvote.a external_caller
 
-keri:keri.c
+noize:noizy.c
+	$(CC) $(CFLAGS) -o $@ $< $(LDLIBS)
+
+keri:fr_simd.c
+	$(CC) $(CFLAGS) -o $@ $< $(LDLIBS)
 
 bbgs_kotter:bbgs_kotter.c
+	$(CC) $(CFLAGS) -o $@ $< $(LDLIBS)
 
 bbgs:bbgs.c
 	$(CC) $(CFLAGS) -o $@ $< $(LDLIBS)
@@ -23,7 +28,7 @@ k2: bbgs_k.c
 libag_frvote.a: ag_frvote_lib.o
 	ar rcs $@ $^
 
-ag_frvote_lib.o: keri.c ag_frvote.h
+ag_frvote_lib.o: noizy.c ag_frvote.h
 	$(CC) $(CFLAGS) -DAG_FRVOTE_NO_MAIN -c -o $@ keri.c
 
 external_caller: external_caller.c libag_frvote.a ag_frvote.h
