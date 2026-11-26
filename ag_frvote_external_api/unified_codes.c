@@ -19,13 +19,13 @@
  * optional) Run:   ./bbgs_decode --help
  */
 #define _POSIX_C_SOURCE 200809L
+#include <ctype.h>
+#include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <errno.h>
-#include <ctype.h>
 
 typedef uint16_t fe;
 
@@ -5673,7 +5673,8 @@ static void usage(void) {
       "exit\n"
       "  -basic           (multi-point) Niederreiter syndrome decoding test\n"
       "                    (default: error vector -> syndrome -> decode)\n"
-      "  -encode          additionally generate a random AG codeword, add errors,\n"
+      "  -encode          additionally generate a random AG codeword, add "
+      "errors,\n"
       "                    decode, and verify exact recovery (with -basic)\n"
       "  -nonewton        disabled: this build requires Newton-polygon bases\n"
       "  --place k        also avoids probing every candidate place (saves "
@@ -6664,10 +6665,10 @@ int noize_run(int argc, char **argv) {
   for (int i = 1; i < argc; ++i) {
     { /* accept --force / --fr / --bms / --vote / --basic / --list as well as
          -force ... */
-      static const char *flags[] = {"half",   "force",    "fr",     "bms",
-                                    "vote",   "frvote",   "basic",  "list",
-                                    "v",      "nonewton", "strict", "limits",
-                                    "nopoly", "forney",   "kotter", "encode", NULL};
+      static const char *flags[] = {
+          "half",   "force",  "fr",     "bms",      "vote",   "frvote",
+          "basic",  "list",   "v",      "nonewton", "strict", "limits",
+          "nopoly", "forney", "kotter", "encode",   NULL};
       if (argv[i][0] == '-' && argv[i][1] == '-')
         for (int f = 0; flags[f]; ++f)
           if (!strcmp(argv[i] + 2, flags[f])) {
@@ -7078,19 +7079,25 @@ int noize_run(int argc, char **argv) {
            "(t <= (deg G - 3g + 1)/2).\n");
   }
   if (encode_requested && !multi) {
-    fprintf(stderr, "ERROR: -encode is available only for the multi-point -basic path (use --pole).\n");
+    fprintf(stderr, "ERROR: -encode is available only for the multi-point "
+                    "-basic path (use --pole).\n");
     return 1;
   }
 
   if (multi) {
-    /* ---------- multi-point: basic Niederreiter syndrome decoding ---------- */
+    /* ---------- multi-point: basic Niederreiter syndrome decoding ----------
+     */
     int degG = 0;
     if (polespec) {
       char *s = strdup(polespec), *tok = strtok(s, ",");
       while (tok) {
         int id, mm;
         if (sscanf(tok, "E%d:%d", &id, &mm) == 2) {
-          if (mm <= 0) { fprintf(stderr, "ERROR: pole multiplicities must be positive\n"); free(s); return 1; }
+          if (mm <= 0) {
+            fprintf(stderr, "ERROR: pole multiplicities must be positive\n");
+            free(s);
+            return 1;
+          }
           if (id < 0 || id >= ne || !ed[id].inf) {
             fprintf(stderr, "E%d is not an edge at infinity\n", id);
             free(s);
@@ -7100,7 +7107,11 @@ int noize_run(int argc, char **argv) {
             if (pl[q].edge == id)
               mult[q] = mm;
         } else if (sscanf(tok, "#%d:%d", &id, &mm) == 2) {
-          if (mm <= 0) { fprintf(stderr, "ERROR: pole multiplicities must be positive\n"); free(s); return 1; }
+          if (mm <= 0) {
+            fprintf(stderr, "ERROR: pole multiplicities must be positive\n");
+            free(s);
+            return 1;
+          }
           if (id < 0 || id >= ng_orb) {
             fprintf(stderr, "no place #%d\n", id);
             free(s);
@@ -7169,18 +7180,24 @@ int noize_run(int argc, char **argv) {
     LSp LG = {0}, LF = {0}, LH = {0};
     double t0 = now();
     if (solve_L(mult, -1, Jstep, Jmax, 0, &LG) != 0) {
-      fprintf(stderr, "ERROR: could not certify a complete basis of L(G); multi-point construction aborted\n");
+      fprintf(stderr, "ERROR: could not certify a complete basis of L(G); "
+                      "multi-point construction aborted\n");
       free(LG.B);
       return 1;
     }
     if (solve_L(fm, -1, Jstep, Jmax, 0, &LF) != 0) {
-      fprintf(stderr, "ERROR: could not certify a complete basis of L(F); multi-point construction aborted\n");
-      free(LG.B); free(LF.B);
+      fprintf(stderr, "ERROR: could not certify a complete basis of L(F); "
+                      "multi-point construction aborted\n");
+      free(LG.B);
+      free(LF.B);
       return 1;
     }
     if (solve_L(hm, -1, Jstep, Jmax, 0, &LH) != 0) {
-      fprintf(stderr, "ERROR: could not certify a complete basis of L(H); multi-point construction aborted\n");
-      free(LG.B); free(LF.B); free(LH.B);
+      fprintf(stderr, "ERROR: could not certify a complete basis of L(H); "
+                      "multi-point construction aborted\n");
+      free(LG.B);
+      free(LF.B);
+      free(LH.B);
       return 1;
     }
     printf("# dim L(G) = %d, dim L(F) = %d, dim L(H) = %d  (%.2f s)\n", LG.dim,
@@ -7188,19 +7205,40 @@ int noize_run(int argc, char **argv) {
     fe *VG = eval_space(&LG), *VF = eval_space(&LF), *VH = eval_space(&LH);
     int rG = LG.dim, dF = LF.dim, dH = LH.dim;
     if (!VG || !VF || !VH) {
-      fprintf(stderr, "ERROR: could not allocate one or more evaluation matrices\n");
-      free(LG.B); free(LF.B); free(LH.B); free(VG); free(VF); free(VH);
+      fprintf(stderr,
+              "ERROR: could not allocate one or more evaluation matrices\n");
+      free(LG.B);
+      free(LF.B);
+      free(LH.B);
+      free(VG);
+      free(VF);
+      free(VH);
       return 1;
     }
     if (rG <= 0 || rG >= npts || dF <= 0 || dH <= 0) {
-      fprintf(stderr, "ERROR: invalid evaluation dimensions (rG=%d, dF=%d, dH=%d, n=%d)\n", rG, dF, dH, npts);
-      free(LG.B); free(LF.B); free(LH.B); free(VG); free(VF); free(VH);
+      fprintf(
+          stderr,
+          "ERROR: invalid evaluation dimensions (rG=%d, dF=%d, dH=%d, n=%d)\n",
+          rG, dF, dH, npts);
+      free(LG.B);
+      free(LF.B);
+      free(LH.B);
+      free(VG);
+      free(VF);
+      free(VH);
       return 1;
     }
     fe *R0 = malloc(sizeof(fe) * (size_t)npts * rG);
     if (!R0 || right_inverse(VG, rG, npts, R0) != 0) {
-      fprintf(stderr, "ERROR: evaluation map L(G) -> GF(q)^n is not injective or right-inverse construction failed\n");
-      free(LG.B); free(LF.B); free(LH.B); free(VG); free(VF); free(VH); free(R0);
+      fprintf(stderr, "ERROR: evaluation map L(G) -> GF(q)^n is not injective "
+                      "or right-inverse construction failed\n");
+      free(LG.B);
+      free(LF.B);
+      free(LH.B);
+      free(VG);
+      free(VF);
+      free(VH);
+      free(R0);
       return 1;
     }
     /* Niederreiter mode needs only the parity-check matrix VG and its
@@ -7211,23 +7249,49 @@ int noize_run(int argc, char **argv) {
     if (encode_requested) {
       fe *VGwork = malloc(sizeof(fe) * (size_t)rG * npts);
       if (!VGwork) {
-        fprintf(stderr, "ERROR: out of memory while constructing generator matrix\n");
-        free(R0); free(LG.B); free(LF.B); free(LH.B); free(VG); free(VF); free(VH);
+        fprintf(stderr,
+                "ERROR: out of memory while constructing generator matrix\n");
+        free(R0);
+        free(LG.B);
+        free(LF.B);
+        free(LH.B);
+        free(VG);
+        free(VF);
+        free(VH);
         return 1;
       }
       memcpy(VGwork, VG, sizeof(fe) * (size_t)rG * npts);
       kcode = nullspace_gf(VGwork, rG, npts, &Gen);
       free(VGwork);
       if (kcode != npts - rG || !Gen) {
-        fprintf(stderr, "ERROR: generator dimension mismatch (got %d, expected %d)\n", kcode, npts-rG);
-        free(Gen); free(R0); free(LG.B); free(LF.B); free(LH.B); free(VG); free(VF); free(VH);
+        fprintf(stderr,
+                "ERROR: generator dimension mismatch (got %d, expected %d)\n",
+                kcode, npts - rG);
+        free(Gen);
+        free(R0);
+        free(LG.B);
+        free(LF.B);
+        free(LH.B);
+        free(VG);
+        free(VF);
+        free(VH);
         return 1;
       }
       for (int s = 0; s < rG; ++s)
         for (int j = 0; j < kcode; ++j)
-          if (dotv(VG + (size_t)s*npts, Gen + (size_t)j*npts, npts)) {
-            fprintf(stderr, "ERROR: generated basis fails parity-check row %d, vector %d\n", s, j);
-            free(Gen); free(R0); free(LG.B); free(LF.B); free(LH.B); free(VG); free(VF); free(VH);
+          if (dotv(VG + (size_t)s * npts, Gen + (size_t)j * npts, npts)) {
+            fprintf(
+                stderr,
+                "ERROR: generated basis fails parity-check row %d, vector %d\n",
+                s, j);
+            free(Gen);
+            free(R0);
+            free(LG.B);
+            free(LF.B);
+            free(LH.B);
+            free(VG);
+            free(VF);
+            free(VH);
             return 1;
           }
     }
@@ -7238,11 +7302,27 @@ int noize_run(int argc, char **argv) {
     fe *codeword = encode_requested ? calloc((size_t)npts, sizeof(fe)) : NULL;
     fe *r = calloc((size_t)npts, sizeof(fe));
     fe *sigma = malloc(sizeof(fe) * rG), *estar = malloc(sizeof(fe) * npts);
-    fe *Mt = malloc(sizeof(fe) * (size_t)dH * dF), *AE = malloc(sizeof(fe) * (size_t)dF * npts);
-    if (!err || (encode_requested && !codeword) || !r || !sigma || !estar || !Mt || !AE) {
-      fprintf(stderr, "ERROR: out of memory in multi-point Niederreiter decoder\n");
-      free(err); free(codeword); free(r); free(sigma); free(estar); free(Mt); free(AE);
-      free(Gen); free(R0); free(LG.B); free(LF.B); free(LH.B); free(VG); free(VF); free(VH);
+    fe *Mt = malloc(sizeof(fe) * (size_t)dH * dF),
+       *AE = malloc(sizeof(fe) * (size_t)dF * npts);
+    if (!err || (encode_requested && !codeword) || !r || !sigma || !estar ||
+        !Mt || !AE) {
+      fprintf(stderr,
+              "ERROR: out of memory in multi-point Niederreiter decoder\n");
+      free(err);
+      free(codeword);
+      free(r);
+      free(sigma);
+      free(estar);
+      free(Mt);
+      free(AE);
+      free(Gen);
+      free(R0);
+      free(LG.B);
+      free(LF.B);
+      free(LH.B);
+      free(VG);
+      free(VF);
+      free(VH);
       return 1;
     }
     int okc = 0;
@@ -7253,9 +7333,10 @@ int noize_run(int argc, char **argv) {
         /* Optional conventional AG-codeword round-trip test. */
         for (int j = 0; j < kcode; ++j) {
           fe msg = (fe)(rnd() % (uint64_t)FS);
-          if (!msg) continue;
+          if (!msg)
+            continue;
           for (int k = 0; k < npts; ++k)
-            codeword[k] ^= mul(msg, Gen[(size_t)j*npts + k]);
+            codeword[k] ^= mul(msg, Gen[(size_t)j * npts + k]);
         }
       }
       for (int k = 0; k < npts; ++k)
@@ -7267,7 +7348,7 @@ int noize_run(int argc, char **argv) {
       {
 #pragma omp for schedule(static)
         for (int s = 0; s < rG; ++s)
-          sigma[s] = dotv(VG + (size_t)s*npts, r, npts);
+          sigma[s] = dotv(VG + (size_t)s * npts, r, npts);
 #pragma omp for schedule(static)
         for (int k = 0; k < npts; ++k) {
           fe acc = 0;
@@ -7283,8 +7364,7 @@ int noize_run(int argc, char **argv) {
 #pragma omp for schedule(static)
         for (int z = 0; z < dH * dF; ++z) {
           int b = z / dF, a = z - b * dF;
-          Mt[z] = dotv(AE + (size_t)a * npts,
-                       VH + (size_t)b * npts, npts);
+          Mt[z] = dotv(AE + (size_t)a * npts, VH + (size_t)b * npts, npts);
         }
       }
       fe *ker;
@@ -7320,7 +7400,8 @@ int noize_run(int argc, char **argv) {
         ok = (same == NUM_ERRORS && nfound == NUM_ERRORS);
         if (ok) {
           /* Correct the received word.  In default Niederreiter mode the
-             transmitted vector is zero; with -encode it is a random codeword. */
+             transmitted vector is zero; with -encode it is a random codeword.
+           */
           for (int c = 0; c < nz; ++c)
             r[Z[c]] ^= val[c];
           if (encode_requested) {
@@ -7328,7 +7409,10 @@ int noize_run(int argc, char **argv) {
               ok = 0;
           } else {
             for (int k = 0; k < npts; ++k)
-              if (r[k] != 0) { ok = 0; break; }
+              if (r[k] != 0) {
+                ok = 0;
+                break;
+              }
           }
         }
       }
@@ -7341,13 +7425,28 @@ int noize_run(int argc, char **argv) {
       free(val);
     }
     if (encode_requested)
-      printf("# BASIC: %d of %d optional encode -> corrupt -> decode -> exact-recovery trials succeeded (%d errors)\n",
+      printf("# BASIC: %d of %d optional encode -> corrupt -> decode -> "
+             "exact-recovery trials succeeded (%d errors)\n",
              okc, trials, NUM_ERRORS);
     else
-      printf("# BASIC: %d of %d Niederreiter syndrome -> decode -> zero-error-vector recovery trials succeeded (%d errors)\n",
+      printf("# BASIC: %d of %d Niederreiter syndrome -> decode -> "
+             "zero-error-vector recovery trials succeeded (%d errors)\n",
              okc, trials, NUM_ERRORS);
-    free(err); free(codeword); free(r); free(sigma); free(estar); free(Mt); free(AE);
-    free(Gen); free(R0); free(LG.B); free(LF.B); free(LH.B); free(VG); free(VF); free(VH);
+    free(err);
+    free(codeword);
+    free(r);
+    free(sigma);
+    free(estar);
+    free(Mt);
+    free(AE);
+    free(Gen);
+    free(R0);
+    free(LG.B);
+    free(LF.B);
+    free(LH.B);
+    free(VG);
+    free(VF);
+    free(VH);
     return okc == trials ? 0 : 1;
   }
 
@@ -7814,9 +7913,9 @@ int noize_run(int argc, char **argv) {
   return 0;
 }
 int noize_decode(int argc, char **argv, const uint16_t *received,
-                     size_t received_len, size_t *error_positions,
-                     uint16_t *error_values, size_t output_capacity,
-                     size_t *error_count) {
+                 size_t received_len, size_t *error_positions,
+                 uint16_t *error_values, size_t output_capacity,
+                 size_t *error_count) {
   if (!argv || argc < 1 || !received || !error_count ||
       (output_capacity && (!error_positions || !error_values)))
     return -1;
@@ -7849,7 +7948,8 @@ int noize_decode(int argc, char **argv, const uint16_t *received,
 #ifndef noize_NO_MAIN
 /* Unified dispatcher is defined at the end of this file. */
 #endif
-/* ================= classical-code module (namespaced from et.c) ============ */
+/* ================= classical-code module (namespaced from et.c) ============
+ */
 #define CODES_NO_MAIN
 #define fe et_fe
 #define Poly et_Poly
@@ -7905,8 +8005,9 @@ int noize_decode(int argc, char **argv, const uint16_t *received,
 
 typedef uint16_t fe;
 
-#define MAXM 12   /* GF(2^m), m <= 12 (fe is 16 bit)                      */
-#define ET_PMAXD 1100 /* maximum polynomial degree (EXTENSION_POINT)           */
+#define MAXM 12 /* GF(2^m), m <= 12 (fe is 16 bit)                      */
+#define ET_PMAXD                                                               \
+  1100 /* maximum polynomial degree (EXTENSION_POINT)           */
 
 static double now(void) {
   struct timespec ts;
@@ -7959,9 +8060,8 @@ typedef struct {
   fe *exp, *log;
 } GF;
 
-static const unsigned DEFPOLY[13] = {0,    0,     0x7,   0xB,   0x13,
-                                     0x25, 0x43,  0x89,  0x11D, 0x211,
-                                     0x409, 0x805, 0x1053};
+static const unsigned DEFPOLY[13] = {
+    0, 0, 0x7, 0xB, 0x13, 0x25, 0x43, 0x89, 0x11D, 0x211, 0x409, 0x805, 0x1053};
 
 static GF *gf_new(int m, unsigned poly) {
   if (m < 2 || m > MAXM)
@@ -7996,7 +8096,9 @@ static inline fe gmul(const GF *F, fe a, fe b) {
   return (a && b) ? F->exp[F->log[a] + F->log[b]] : 0;
 }
 static inline fe ginv(const GF *F, fe a) { return F->exp[F->ord - F->log[a]]; }
-static inline fe gdiv(const GF *F, fe a, fe b) { return gmul(F, a, ginv(F, b)); }
+static inline fe gdiv(const GF *F, fe a, fe b) {
+  return gmul(F, a, ginv(F, b));
+}
 static fe gpow(const GF *F, fe a, long long n) {
   if (n == 0)
     return 1;
@@ -8014,7 +8116,8 @@ static fe gfrob(const GF *F, fe a, int i) { /* a^(2^i) = a^[i] */
 }
 static fe grand_nz(const GF *F) { return (fe)(1 + rnd() % (uint64_t)F->ord); }
 
-/* ================= polynomials over GF(2^m); deg = -1 is the zero poly ===== */
+/* ================= polynomials over GF(2^m); deg = -1 is the zero poly =====
+ */
 typedef struct {
   int deg;
   fe c[ET_PMAXD + 1];
@@ -8210,7 +8313,8 @@ static unsigned b2_reduce(const B2 *b, unsigned v, unsigned *mask) {
 /* ================= Berlekamp-Massey ================= */
 /* shortest LFSR for u[0..N-1]; C[0..N] = connection poly (C[0]=1); returns L */
 static int bm(const GF *F, const fe *u, int N, fe *C) {
-  fe *B = calloc((size_t)N + 2, sizeof(fe)), *Tt = calloc((size_t)N + 2, sizeof(fe));
+  fe *B = calloc((size_t)N + 2, sizeof(fe)),
+     *Tt = calloc((size_t)N + 2, sizeof(fe));
   memset(C, 0, sizeof(fe) * (size_t)(N + 1));
   C[0] = 1;
   B[0] = 1;
@@ -8257,7 +8361,8 @@ static int bm(const GF *F, const fe *u, int N, fe *C) {
 static int alt_decode(const GF *F, int n, const fe *al, const fe *y, int r,
                       const fe *rcv, const uint8_t *era, int *epos, fe *eval) {
   int res = -1;
-  fe *S = calloc((size_t)r + 1, sizeof(fe)), *T = calloc((size_t)r + 1, sizeof(fe)),
+  fe *S = calloc((size_t)r + 1, sizeof(fe)),
+     *T = calloc((size_t)r + 1, sizeof(fe)),
      *C = calloc((size_t)r + 2, sizeof(fe));
   Poly *Gam = malloc(sizeof(Poly)), *Lam = malloc(sizeof(Poly)),
        *Psi = malloc(sizeof(Poly)), *Om = malloc(sizeof(Poly)),
@@ -8662,8 +8767,15 @@ static uint32_t *golay_table(void) {
 }
 
 /* ================= unified binary code object ================= */
-static int g_fht = 0; /* -fht: RM(1,m) is decoded by the Walsh-Hadamard transform */
-typedef enum { BC_ALT = 0, BC_GOPPA = 1, BC_GOLAY = 2, BC_RM = 3, BC_HAD = 4 } BcKind;
+static int g_fht =
+    0; /* -fht: RM(1,m) is decoded by the Walsh-Hadamard transform */
+typedef enum {
+  BC_ALT = 0,
+  BC_GOPPA = 1,
+  BC_GOLAY = 2,
+  BC_RM = 3,
+  BC_HAD = 4
+} BcKind;
 typedef struct {
   char name[128];
   BcKind kind;
@@ -8672,8 +8784,8 @@ typedef struct {
   AltCode *alt;
   uint32_t *gtab;
   int rm_r, rm_m;
-  unsigned *mon;   /* RM: monomial x_S (bit mask S), degree <= r */
-  uint8_t *gsys;   /* RM: systematic generator, k rows of n bytes */
+  unsigned *mon; /* RM: monomial x_S (bit mask S), degree <= r */
+  uint8_t *gsys; /* RM: systematic generator, k rows of n bytes */
 } BinCode;
 
 static BinCode *bc_from_alt(AltCode *A, const char *name, int t) {
@@ -9043,7 +9155,8 @@ static int grs_decode(GRS *G, const fe *rcv, const uint8_t *era, fe *out) {
 static void grs_message(const GRS *G, const fe *cw, fe *msg) {
   const GF *F = G->F;
   int k = G->k;
-  fe *M = calloc((size_t)k + 1, sizeof(fe)), *Q = calloc((size_t)k + 1, sizeof(fe));
+  fe *M = calloc((size_t)k + 1, sizeof(fe)),
+     *Q = calloc((size_t)k + 1, sizeof(fe));
   M[0] = 1;
   for (int i = 0; i < k; ++i) { /* M <- M * (x + al_i) */
     for (int j = i + 1; j >= 1; --j)
@@ -9089,8 +9202,10 @@ static Gab *gab_new(GF *F, int n, int k) {
   for (int j = 0; j < n; ++j)
     G->g[j] = F->exp[j]; /* 1, a, a^2, ...: independent over GF(2) */
   int N = n - 1;
-  fe *A = malloc(sizeof(fe) * (size_t)N * (size_t)N), *b = malloc(sizeof(fe) * (size_t)N);
-  for (int i = 0; i < N; ++i) { /* sum_j h_j g_j^[i] = 0, i = 0..n-2, h_{n-1}=1 */
+  fe *A = malloc(sizeof(fe) * (size_t)N * (size_t)N),
+     *b = malloc(sizeof(fe) * (size_t)N);
+  for (int i = 0; i < N;
+       ++i) { /* sum_j h_j g_j^[i] = 0, i = 0..n-2, h_{n-1}=1 */
     for (int j = 0; j < N; ++j)
       A[i * N + j] = gfrob(F, G->g[j], i);
     b[i] = gfrob(F, G->g[n - 1], i);
@@ -9165,7 +9280,8 @@ static int gab_decode(const Gab *G, const fe *y, fe *out) {
   int tau, found = 0;
   fe lam[8];
   for (tau = r / 2; tau >= 1; --tau) {
-    /* sum_{l=0}^{tau} Lambda_l s_{i-l}^[l] = 0, i = tau..2tau-1, Lambda_tau=1 */
+    /* sum_{l=0}^{tau} Lambda_l s_{i-l}^[l] = 0, i = tau..2tau-1, Lambda_tau=1
+     */
     for (int row = 0; row < tau; ++row) {
       for (int l = 0; l < tau; ++l)
         A[row * tau + l] = gfrob(F, s[row + tau - l], l);
@@ -9303,35 +9419,57 @@ static void sort_ints(int *a, int n) {
   }
 }
 
-/* File-based binary message path. Input bits are packed MSB-first for binary files. */
-static uint8_t *read_message_bits(const char *path, const char *fmt, size_t *nbits) {
+/* File-based binary message path. Input bits are packed MSB-first for binary
+ * files. */
+static uint8_t *read_message_bits(const char *path, const char *fmt,
+                                  size_t *nbits) {
   FILE *fp = fopen(path, "rb");
-  if (!fp) die("cannot open input file '%s': %s", path, strerror(errno));
+  if (!fp)
+    die("cannot open input file '%s': %s", path, strerror(errno));
   size_t cap = 4096, n = 0;
   uint8_t *bits = malloc(cap);
-  if (!bits) die("out of memory reading input");
+  if (!bits)
+    die("out of memory reading input");
   int c;
   if (!strcmp(fmt, "binary")) {
     while ((c = fgetc(fp)) != EOF) {
-      if (n + 8 > cap) { cap *= 2; bits = realloc(bits, cap); if (!bits) die("out of memory"); }
-      for (int b = 7; b >= 0; --b) bits[n++] = (uint8_t)((c >> b) & 1);
+      if (n + 8 > cap) {
+        cap *= 2;
+        bits = realloc(bits, cap);
+        if (!bits)
+          die("out of memory");
+      }
+      for (int b = 7; b >= 0; --b)
+        bits[n++] = (uint8_t)((c >> b) & 1);
     }
   } else if (!strcmp(fmt, "text")) {
     while ((c = fgetc(fp)) != EOF) {
       if (c == '0' || c == '1') {
-        if (n == cap) { cap *= 2; bits = realloc(bits, cap); if (!bits) die("out of memory"); }
+        if (n == cap) {
+          cap *= 2;
+          bits = realloc(bits, cap);
+          if (!bits)
+            die("out of memory");
+        }
         bits[n++] = (uint8_t)(c - '0');
       } else if (isspace((unsigned char)c)) {
         continue;
       } else {
-        fclose(fp); free(bits);
+        fclose(fp);
+        free(bits);
         die("text input must contain only 0/1 and whitespace");
       }
     }
   } else {
-    fclose(fp); free(bits); die("--input-format must be binary or text");
+    fclose(fp);
+    free(bits);
+    die("--input-format must be binary or text");
   }
-  if (ferror(fp)) { fclose(fp); free(bits); die("error reading input file '%s'", path); }
+  if (ferror(fp)) {
+    fclose(fp);
+    free(bits);
+    die("error reading input file '%s'", path);
+  }
   fclose(fp);
   *nbits = n;
   return bits;
@@ -9340,30 +9478,42 @@ static uint8_t *read_message_bits(const char *path, const char *fmt, size_t *nbi
 static void write_message_bits(const char *path, const char *fmt,
                                const uint8_t *bits, size_t nbits) {
   FILE *fp = path ? fopen(path, "wb") : stdout;
-  if (!fp) die("cannot open output file '%s': %s", path, strerror(errno));
+  if (!fp)
+    die("cannot open output file '%s': %s", path, strerror(errno));
   if (!strcmp(fmt, "text")) {
-    for (size_t i = 0; i < nbits; ++i) fputc(bits[i] ? '1' : '0', fp);
-    if (path) fputc('\n', fp);
+    for (size_t i = 0; i < nbits; ++i)
+      fputc(bits[i] ? '1' : '0', fp);
+    if (path)
+      fputc('\n', fp);
   } else if (!strcmp(fmt, "binary")) {
     for (size_t i = 0; i < nbits; i += 8) {
       unsigned v = 0;
       for (int b = 0; b < 8; ++b)
-        if (i + (size_t)b < nbits && bits[i + (size_t)b]) v |= 1u << (7 - b);
+        if (i + (size_t)b < nbits && bits[i + (size_t)b])
+          v |= 1u << (7 - b);
       fputc((int)v, fp);
     }
   } else {
-    if (path) fclose(fp);
+    if (path)
+      fclose(fp);
     die("--output-format must be binary, text, or screen");
   }
-  if (ferror(fp)) { if (path) fclose(fp); die("error writing output"); }
-  if (path) fclose(fp);
+  if (ferror(fp)) {
+    if (path)
+      fclose(fp);
+    die("error writing output");
+  }
+  if (path)
+    fclose(fp);
 }
 
 static void run_bincode_file(const BinCode *B, const char *inpath,
                              const char *outpath, const char *informat,
                              const char *outformat, int nerr, int verbose) {
-  if (nerr < 0) nerr = 0;
-  if (nerr > B->n) die("--errors must not exceed code length n=%d", B->n);
+  if (nerr < 0)
+    nerr = 0;
+  if (nerr > B->n)
+    die("--errors must not exceed code length n=%d", B->n);
   size_t nbits = 0;
   uint8_t *src = read_message_bits(inpath, informat, &nbits);
   size_t blocks = nbits ? (nbits + (size_t)B->k - 1) / (size_t)B->k : 0;
@@ -9371,7 +9521,8 @@ static void run_bincode_file(const BinCode *B, const char *inpath,
   uint8_t *msg = calloc((size_t)B->k, 1), *cw = malloc((size_t)B->n),
           *rv = malloc((size_t)B->n), *out = malloc((size_t)B->n);
   int *ep = malloc(sizeof(int) * (size_t)(nerr + 1));
-  if (!decoded || !msg || !cw || !rv || !out || !ep) die("out of memory in file mode");
+  if (!decoded || !msg || !cw || !rv || !out || !ep)
+    die("out of memory in file mode");
   int good = 0, detected = 0, wrong = 0;
   double enc_time = 0.0, dec_time = 0.0;
   for (size_t block = 0; block < blocks; ++block) {
@@ -9384,35 +9535,52 @@ static void run_bincode_file(const BinCode *B, const char *inpath,
     enc_time += now() - t0;
     memcpy(rv, cw, (size_t)B->n);
     pick(B->n, nerr, ep, NULL);
-    for (int e = 0; e < nerr; ++e) rv[ep[e]] ^= 1;
+    for (int e = 0; e < nerr; ++e)
+      rv[ep[e]] ^= 1;
     t0 = now();
     int res = bc_decode(B, rv, NULL, out);
     dec_time += now() - t0;
     int cls = res < 0 ? 1 : (memcmp(out, cw, (size_t)B->n) ? 2 : 0);
     if (cls == 0) {
       for (int j = 0; j < B->k; ++j)
-        if (out[B->info[j]] != msg[j]) { cls = 2; break; }
+        if (out[B->info[j]] != msg[j]) {
+          cls = 2;
+          break;
+        }
     }
-    if (cls == 0) ++good; else if (cls == 1) ++detected; else ++wrong;
+    if (cls == 0)
+      ++good;
+    else if (cls == 1)
+      ++detected;
+    else
+      ++wrong;
     for (size_t j = 0; j < take; ++j)
       decoded[off + j] = out[B->info[j]];
     if (verbose)
-      fprintf(stderr, "# block %zu/%zu: %d errors -> %s\n", block + 1,
-              blocks, nerr, cls_name(cls));
+      fprintf(stderr, "# block %zu/%zu: %d errors -> %s\n", block + 1, blocks,
+              nerr, cls_name(cls));
   }
   if (!strcmp(outformat, "screen")) {
-    for (size_t i = 0; i < nbits; ++i) putchar(decoded[i] ? '1' : '0');
+    for (size_t i = 0; i < nbits; ++i)
+      putchar(decoded[i] ? '1' : '0');
     putchar('\n');
   } else {
     write_message_bits(outpath, outformat, decoded, nbits);
   }
   fprintf(stderr,
-          "# file mode: input=%s format=%s bits=%zu blocks=%zu code=%s [n=%d,k=%d] errors/block=%d\n"
+          "# file mode: input=%s format=%s bits=%zu blocks=%zu code=%s "
+          "[n=%d,k=%d] errors/block=%d\n"
           "# result: correct=%d detected=%d miscorrected=%d\n"
           "# time: encode %.6f s decode %.6f s\n",
-          inpath, informat, nbits, blocks, B->name, B->n, B->k, nerr,
-          good, detected, wrong, enc_time, dec_time);
-  free(src); free(decoded); free(msg); free(cw); free(rv); free(out); free(ep);
+          inpath, informat, nbits, blocks, B->name, B->n, B->k, nerr, good,
+          detected, wrong, enc_time, dec_time);
+  free(src);
+  free(decoded);
+  free(msg);
+  free(cw);
+  free(rv);
+  free(out);
+  free(ep);
 }
 
 /* ---- binary codes: bch / alt / goppa / golay ---- */
@@ -9490,8 +9658,9 @@ static void run_grs(GRS *G, int trials, int nerr, int nera, int verbose,
                     int showv) {
   int n = G->n, k = G->k;
   const GF *F = G->F;
-  fe *msg = malloc(sizeof(fe) * (size_t)k), *dm = malloc(sizeof(fe) * (size_t)k),
-     *cw = malloc(sizeof(fe) * (size_t)n), *rv = malloc(sizeof(fe) * (size_t)n),
+  fe *msg = malloc(sizeof(fe) * (size_t)k),
+     *dm = malloc(sizeof(fe) * (size_t)k), *cw = malloc(sizeof(fe) * (size_t)n),
+     *rv = malloc(sizeof(fe) * (size_t)n),
      *out = malloc(sizeof(fe) * (size_t)n);
   uint8_t *era = calloc((size_t)n, 1), *used = calloc((size_t)n, 1);
   int *ep = malloc(sizeof(int) * (size_t)(nerr + 1)),
@@ -9560,8 +9729,9 @@ static void run_rank(Gab *G, int trials, int nerr, int verbose, int showv) {
   const GF *F = G->F;
   if (nerr > n)
     die("rank weight cannot exceed n");
-  fe *msg = malloc(sizeof(fe) * (size_t)k), *dm = malloc(sizeof(fe) * (size_t)k),
-     *cw = malloc(sizeof(fe) * (size_t)n), *rv = malloc(sizeof(fe) * (size_t)n),
+  fe *msg = malloc(sizeof(fe) * (size_t)k),
+     *dm = malloc(sizeof(fe) * (size_t)k), *cw = malloc(sizeof(fe) * (size_t)n),
+     *rv = malloc(sizeof(fe) * (size_t)n),
      *out = malloc(sizeof(fe) * (size_t)n), *e = malloc(sizeof(fe) * (size_t)n);
   Stat st = {0};
   int quiet = trials > 1 && !verbose;
@@ -9607,14 +9777,75 @@ static void run_rank(Gab *G, int trials, int nerr, int verbose, int showv) {
 }
 
 /* ---- product code C1 x C2 : rows are C1 words (length n1), columns C2 ---- */
+/* Iterative bounded-distance product decoder.
+ * Layout: n2 rows of length n1; C1 constrains rows and C2 columns.
+ * Return the number of sweeps, or -1 if the final array is not in C1 x C2.
+ * An intermediate component failure is not fatal: the orthogonal pass may
+ * still make progress. */
+static int product_decode(const BinCode *C1, const BinCode *C2, uint8_t *R,
+                          int iters) {
+  const int n1 = C1->n, n2 = C2->n;
+  uint8_t *tmp = malloc((size_t)(n1 > n2 ? n1 : n2));
+  uint8_t *col = malloc((size_t)n2), *col2 = malloc((size_t)n2);
+  if (!tmp || !col || !col2) {
+    free(tmp);
+    free(col);
+    free(col2);
+    return -1;
+  }
+  int sweeps = 0;
+  for (int it = 0; it < iters; ++it) {
+    int changed = 0;
+    ++sweeps;
+    for (int i = 0; i < n2; ++i) {
+      uint8_t *row = R + (size_t)i * n1;
+      int rc = bc_decode(C1, row, NULL, tmp);
+      if (rc > 0 && memcmp(row, tmp, (size_t)n1)) {
+        memcpy(row, tmp, (size_t)n1);
+        ++changed;
+      }
+    }
+    for (int j = 0; j < n1; ++j) {
+      for (int i = 0; i < n2; ++i)
+        col[i] = R[(size_t)i * n1 + j];
+      int rc = bc_decode(C2, col, NULL, col2);
+      if (rc > 0 && memcmp(col, col2, (size_t)n2)) {
+        for (int i = 0; i < n2; ++i)
+          R[(size_t)i * n1 + j] = col2[i];
+        ++changed;
+      }
+    }
+    if (!changed)
+      break;
+  }
+  /* Verify every row and column after the last sweep. */
+  int valid = 1;
+  for (int i = 0; i < n2 && valid; ++i) {
+    const uint8_t *row = R + (size_t)i * n1;
+    int rc = bc_decode(C1, row, NULL, tmp);
+    if (rc < 0 || memcmp(row, tmp, (size_t)n1))
+      valid = 0;
+  }
+  for (int j = 0; j < n1 && valid; ++j) {
+    for (int i = 0; i < n2; ++i)
+      col[i] = R[(size_t)i * n1 + j];
+    int rc = bc_decode(C2, col, NULL, col2);
+    if (rc < 0 || memcmp(col, col2, (size_t)n2))
+      valid = 0;
+  }
+  free(tmp);
+  free(col);
+  free(col2);
+  return valid ? sweeps : -1;
+}
+
 static void run_product(const BinCode *C1, const BinCode *C2, int trials,
                         int nerr, int iters, int verbose, int showv) {
   int n1 = C1->n, k1 = C1->k, n2 = C2->n, k2 = C2->k, N = n1 * n2;
   if (nerr > N)
     die("too many errors for the %d x %d array", n2, n1);
   uint8_t *msg = malloc((size_t)k1 * k2), *A = malloc((size_t)N),
-          *R = malloc((size_t)N), *tmp = malloc((size_t)(n1 > n2 ? n1 : n2)),
-          *col = malloc((size_t)n2), *col2 = malloc((size_t)n2),
+          *R = malloc((size_t)N), *col = malloc((size_t)n2),
           *cm = malloc((size_t)k2);
   int *ep = malloc(sizeof(int) * (size_t)(nerr + 1));
   Stat st = {0};
@@ -9639,48 +9870,19 @@ static void run_product(const BinCode *C1, const BinCode *C2, int trials,
     for (int e = 0; e < nerr; ++e)
       R[ep[e]] ^= 1;
     t0 = now();
-    int it, bad = 0;
-    for (it = 1; it <= iters; ++it) {
-      int changed = 0;
-      bad = 0;
-      for (int i = 0; i < n2; ++i) { /* rows */
-        int c = bc_decode(C1, R + i * n1, NULL, tmp);
-        if (c < 0)
-          ++bad;
-        else if (c > 0) {
-          memcpy(R + i * n1, tmp, (size_t)n1);
-          ++changed;
-        }
-      }
-      for (int j = 0; j < n1; ++j) { /* columns */
-        for (int i = 0; i < n2; ++i)
-          col[i] = R[i * n1 + j];
-        int c = bc_decode(C2, col, NULL, col2);
-        if (c < 0)
-          ++bad;
-        else if (c > 0) {
-          for (int i = 0; i < n2; ++i)
-            R[i * n1 + j] = col2[i];
-          ++changed;
-        }
-      }
-      if (!changed)
-        break;
-    }
+    int sweeps = product_decode(C1, C2, R, iters);
     st.t_dec += now() - t0;
-    int cls = bad ? 1 : (memcmp(R, A, (size_t)N) ? 2 : 0);
+    int cls = sweeps < 0 ? 1 : (memcmp(R, A, (size_t)N) ? 2 : 0);
     if (cls == 0)
       for (int a = 0; a < k2; ++a)
         for (int b = 0; b < k1; ++b)
           if (R[C2->info[a] * n1 + C1->info[b]] != msg[a * k1 + b])
             cls = 2;
-    if (bad && !memcmp(R, A, (size_t)N))
-      cls = 0; /* all words are fine; "bad" came from an earlier sweep */
     stat_add(&st, cls);
     if (!quiet) {
       printf("# trial %d: %d errors in a %d x %d array -> %s (%d sweep%s)\n",
-             tr + 1, nerr, n2, n1, cls_name(cls), it > iters ? iters : it,
-             (it > iters ? iters : it) == 1 ? "" : "s");
+             tr + 1, nerr, n2, n1, cls_name(cls), sweeps < 0 ? iters : sweeps,
+             (sweeps < 0 ? iters : sweeps) == 1 ? "" : "s");
       if (showv && N <= 1024) {
         int diff = 0;
         for (int i = 0; i < N; ++i)
@@ -9692,6 +9894,12 @@ static void run_product(const BinCode *C1, const BinCode *C2, int trials,
   char what[64];
   snprintf(what, sizeof what, "%d random errors", nerr);
   stat_print(&st, what);
+  free(msg);
+  free(A);
+  free(R);
+  free(col);
+  free(cm);
+  free(ep);
 }
 
 /* ---- concatenated code: outer GRS over GF(2^m), inner binary code ---- */
@@ -9704,8 +9912,10 @@ static void run_concat(GRS *G, const BinCode *In, int trials, int nerr,
         m);
   if (nerr > N)
     die("too many errors for %ld bits", N);
-  fe *msg = malloc(sizeof(fe) * (size_t)ko), *dm = malloc(sizeof(fe) * (size_t)ko),
-     *cw = malloc(sizeof(fe) * (size_t)no), *rs = malloc(sizeof(fe) * (size_t)no),
+  fe *msg = malloc(sizeof(fe) * (size_t)ko),
+     *dm = malloc(sizeof(fe) * (size_t)ko),
+     *cw = malloc(sizeof(fe) * (size_t)no),
+     *rs = malloc(sizeof(fe) * (size_t)no),
      *os = malloc(sizeof(fe) * (size_t)no);
   uint8_t *bits = malloc((size_t)N), *ib = malloc((size_t)In->k),
           *era = calloc((size_t)no, 1), *dec = malloc((size_t)ni);
@@ -9771,21 +9981,25 @@ static void run_concat(GRS *G, const BinCode *In, int trials, int nerr,
 static void usage(void) {
   puts(
       "codes [options] [seed]\n"
-      "  --code bch|golay|goppa|alt|rm|hadamard|grs|rank|product|concat   (default bch)\n"
-      "  --m m           field GF(2^m), m <= 12              (default per code)\n"
+      "  --code bch|golay|goppa|alt|rm|hadamard|grs|rank|product|concat   "
+      "(default bch)\n"
+      "  --m m           field GF(2^m), m <= 12              (default per "
+      "code)\n"
       "  --poly 0x43     primitive polynomial of GF(2^m)     (default: "
       "standard)\n"
       "  --len n         code length (bch: also divisors of 2^m-1 => cyclic; "
       "goppa/alt/grs/rank)\n"
       "  --k k           dimension (grs, rank, concat outer code)\n"
       "  --t t           correction capability (bch, goppa = deg g, alt)\n"
-      "  --r r           Reed-Muller order: RM(r,m), length 2^m     (default 2)\n"
+      "  --r r           Reed-Muller order: RM(r,m), length 2^m     (default "
+      "2)\n"
       "  --b b           first zero beta^b of the BCH code   (default 1)\n"
       "  --ext           golay: extended [24,12,8] code\n"
       "  --errors e      injected errors (bits / symbols / rank / total bits)\n"
       "                  default: the guaranteed capability of the code\n"
       "  --erasures s    injected erasures (bch, alt, grs)\n"
-      "  --input FILE    encode/decode data from a file (binary-code families)\n"
+      "  --input FILE    encode/decode data from a file (binary-code "
+      "families)\n"
       "  --input-format binary|text   input format (default binary)\n"
       "  --output FILE   decoded output file\n"
       "  --output-format binary|text|screen   output format (default screen)\n"
@@ -9816,7 +10030,8 @@ static void usage(void) {
       "100");
 }
 static int flag(const char *a, const char *name) {
-  return a[0] == '-' && (!strcmp(a + 1, name) || (a[1] == '-' && !strcmp(a + 2, name)));
+  return a[0] == '-' &&
+         (!strcmp(a + 1, name) || (a[1] == '-' && !strcmp(a + 2, name)));
 }
 
 int codes_run(int argc, char **argv) {
@@ -9858,8 +10073,7 @@ int codes_run(int argc, char **argv) {
     else if (!strcmp(argv[i], "--no-errors")) {
       no_errors = 1;
       nerr = 0;
-    }
-    else if (!strcmp(argv[i], "--erasures") && i + 1 < argc)
+    } else if (!strcmp(argv[i], "--erasures") && i + 1 < argc)
       nera = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--c1") && i + 1 < argc)
       c1 = argv[++i];
@@ -9901,8 +10115,8 @@ int codes_run(int argc, char **argv) {
     (void)rnd();
 
   if (!strcmp(code, "bch") || !strcmp(code, "alt") || !strcmp(code, "goppa") ||
-      !strcmp(code, "golay") ||
-      !strcmp(code, "rm") || !strcmp(code, "hadamard")) {
+      !strcmp(code, "golay") || !strcmp(code, "rm") ||
+      !strcmp(code, "hadamard")) {
     BinCode *B;
     char spec[64];
     if (!strcmp(code, "golay"))
@@ -9915,46 +10129,57 @@ int codes_run(int argc, char **argv) {
       int mm = m ? m : (!strcmp(code, "goppa") ? 8 : 6);
       int tt = t > 0 ? t : (!strcmp(code, "goppa") ? 10 : 3);
       if (!strcmp(code, "bch"))
-        snprintf(spec, sizeof spec, "bch:%d:%d:%d:%d", mm, tt, len > 0 ? len : 0, b);
+        snprintf(spec, sizeof spec, "bch:%d:%d:%d:%d", mm, tt,
+                 len > 0 ? len : 0, b);
       else if (!strcmp(code, "goppa"))
-        snprintf(spec, sizeof spec, "goppa:%d:%d:%d", mm, tt, len > 0 ? len : 0);
+        snprintf(spec, sizeof spec, "goppa:%d:%d:%d", mm, tt,
+                 len > 0 ? len : 0);
       else
-        snprintf(spec, sizeof spec, "alt:%d:%d:%d", mm, len > 0 ? len : (1 << mm) - 1, tt);
+        snprintf(spec, sizeof spec, "alt:%d:%d:%d", mm,
+                 len > 0 ? len : (1 << mm) - 1, tt);
       B = bc_parse(spec, poly);
     }
     if (nerr < 0 && !input_path)
       nerr = B->t;
     if (input_path)
-      fprintf(stderr, "# code: %s, dimension k=%d, corrects t=%d errors%s\n", B->name,
-              B->k, B->t, B->kind == BC_ALT ? " (+ erasures: 2e+s <= 2t)" : "");
+      fprintf(stderr, "# code: %s, dimension k=%d, corrects t=%d errors%s\n",
+              B->name, B->k, B->t,
+              B->kind == BC_ALT ? " (+ erasures: 2e+s <= 2t)" : "");
     else
       printf("# code: %s, dimension k=%d, corrects t=%d errors%s\n", B->name,
              B->k, B->t, B->kind == BC_ALT ? " (+ erasures: 2e+s <= 2t)" : "");
     if (only_list)
       return 0;
     if (input_path) {
-      if (nera) die("--erasures is not available in file mode yet");
-      if (trials != 1) die("-n cannot be combined with --input");
+      if (nera)
+        die("--erasures is not available in file mode yet");
+      if (trials != 1)
+        die("-n cannot be combined with --input");
       if (!strcmp(output_format, "screen") && output_path)
         die("--output cannot be used with --output-format screen");
       if (strcmp(output_format, "screen") && !output_path)
         die("--output FILE is required for binary/text output");
-      if (!no_errors && nerr < 0) nerr = 0;
-      run_bincode_file(B, input_path, output_path, input_format,
-                       output_format, nerr, verbose);
+      if (!no_errors && nerr < 0)
+        nerr = 0;
+      run_bincode_file(B, input_path, output_path, input_format, output_format,
+                       nerr, verbose);
       return 0;
     }
-    if (input_path || output_path) die("file mode currently supports binary code families only");
+    if (input_path || output_path)
+      die("file mode currently supports binary code families only");
     run_bincode(B, trials, nerr, nera, verbose, showv);
     return 0;
   }
   if (input_path || output_path || strcmp(input_format, "binary") ||
       strcmp(output_format, "screen"))
-    die("file mode is currently implemented for bch/golay/goppa/alt/rm/hadamard");
+    die("file mode is currently implemented for "
+        "bch/golay/goppa/alt/rm/hadamard");
   if (!strcmp(code, "grs")) {
     int mm = m ? m : 8;
     GF *F = gf_new(mm, poly);
-    int n = len > 0 ? len : F->ord, kk = k > 0 ? k : n - 32 > 0 ? n - 32 : n / 2;
+    int n = len > 0 ? len : F->ord, kk = k > 0        ? k
+                                         : n - 32 > 0 ? n - 32
+                                                      : n / 2;
     GRS *G = grs_new(F, n, kk, shuffle, randv);
     if (nerr < 0)
       nerr = (n - kk) / 2;
@@ -9984,7 +10209,8 @@ int codes_run(int argc, char **argv) {
   if (!strcmp(code, "product")) {
     BinCode *A = bc_parse(c1, poly), *B2c = bc_parse(c2 ? c2 : c1, poly);
     if (nerr < 0)
-      nerr = (A->dmin * B2c->dmin - 1) / 2 < 8 ? (A->dmin * B2c->dmin - 1) / 2 : 8;
+      nerr =
+          (A->dmin * B2c->dmin - 1) / 2 < 8 ? (A->dmin * B2c->dmin - 1) / 2 : 8;
     printf("# product code: C1 = %s (rows)  x  C2 = %s (columns)\n", A->name,
            B2c->name);
     printf("# length %d x %d = %d, dimension %d x %d = %d, d >= %d, "
@@ -10036,7 +10262,8 @@ int main(int argc, char **argv) { return codes_run(argc, argv); }
 static void unified_usage(void) {
   puts("unified_codes [--family ag|classical] [options] [seed]");
   puts("\nFAMILIES");
-  puts("  ag          Algebraic-geometry codes (default; BBGS/Hermitian/Suzuki/custom)");
+  puts("  ag          Algebraic-geometry codes (default; "
+       "BBGS/Hermitian/Suzuki/custom)");
   puts("  classical   BCH, Golay, Goppa, alternant, Reed-Muller, Hadamard,");
   puts("              GRS, Gabidulin(rank), product, and concatenated codes");
   puts("\nHELP");
@@ -10045,27 +10272,42 @@ static void unified_usage(void) {
   puts("  --family ag --help        Show AG-code options");
   puts("  --family classical --help Show classical-code options");
   puts("\nCLASSICAL FAMILY SHORTCUTS");
-  puts("  --code SPEC ...           Selects the classical family automatically");
+  puts(
+      "  --code SPEC ...           Selects the classical family automatically");
   puts("  --code rm --r 1 --m 8 -fht   RM(1,8), fast Walsh-Hadamard decoding");
   puts("  --code rm --r 2 --m 8        RM(2,8), majority decoding");
   puts("\nBUILD");
-  puts("  cc -O2 -std=gnu11 -fopenmp -Wall -Wextra unified_codes.c -lm -o unified_codes");
+  puts("  cc -O2 -std=gnu11 -fopenmp -Wall -Wextra unified_codes.c -lm -o "
+       "unified_codes");
   puts("\nFor the full option list, use --help-all or select a family above.");
 }
 int main(int argc, char **argv) {
   int fam = 0; /* 0=AG, 1=classical */
   int first = 1;
   if (argc > 1 && !strcmp(argv[1], "--family")) {
-    if (argc < 3) { fprintf(stderr, "--family requires ag or classical\n"); return 2; }
-    if (!strcmp(argv[2], "ag")) fam = 0;
-    else if (!strcmp(argv[2], "classical") || !strcmp(argv[2], "classic")) fam = 1;
-    else { fprintf(stderr, "unknown family '%s' (use ag or classical)\n", argv[2]); return 2; }
+    if (argc < 3) {
+      fprintf(stderr, "--family requires ag or classical\n");
+      return 2;
+    }
+    if (!strcmp(argv[2], "ag"))
+      fam = 0;
+    else if (!strcmp(argv[2], "classical") || !strcmp(argv[2], "classic"))
+      fam = 1;
+    else {
+      fprintf(stderr, "unknown family '%s' (use ag or classical)\n", argv[2]);
+      return 2;
+    }
     first = 3;
   } else if (argc > 1 && !strncmp(argv[1], "--family=", 9)) {
     const char *v = argv[1] + 9;
-    if (!strcmp(v, "ag")) fam = 0;
-    else if (!strcmp(v, "classical") || !strcmp(v, "classic")) fam = 1;
-    else { fprintf(stderr, "unknown family '%s' (use ag or classical)\n", v); return 2; }
+    if (!strcmp(v, "ag"))
+      fam = 0;
+    else if (!strcmp(v, "classical") || !strcmp(v, "classic"))
+      fam = 1;
+    else {
+      fprintf(stderr, "unknown family '%s' (use ag or classical)\n", v);
+      return 2;
+    }
     first = 2;
   } else if (argc > 1 && !strcmp(argv[1], "--code")) {
     fam = 1;
@@ -10083,7 +10325,8 @@ int main(int argc, char **argv) {
     return 0;
   }
   if (fam == 1) {
-    /* Pass a compact argv without the family selector to the classical parser. */
+    /* Pass a compact argv without the family selector to the classical parser.
+     */
     int nargc = argc - (first - 1);
     char **nargv = argv + (first - 1);
     return codes_run(nargc, nargv);

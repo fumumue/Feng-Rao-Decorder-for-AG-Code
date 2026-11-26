@@ -299,3 +299,151 @@ README は特定のオープンソースライセンスを宣言しません。
 バイナリ入力は各バイトの最上位ビットから順にビット列へ展開します。入力データは符号次元 `k` ビット単位に分割し、最後のブロックが不足する場合は内部で 0 を補います。復号後は元の入力ビット長に切り詰めて出力するため、バイナリ入力では元のファイル長が保たれます。テキスト入力は `0` と `1` および空白文字のみを受け付けます。テキスト入力を `binary` 出力する場合、最終バイトの未使用ビットは 0 で埋められます。
 
 `--errors` を省略したファイルモードは誤りなし（0 個）です。`--errors E` はファイル全体ではなく、符号化した各ブロックに E 個ずつ誤りを付加します。現段階ではファイルモードの消失訂正（`--erasures`）は未対応です。各ブロックの復号成功・検出失敗・誤訂正の件数と処理時間は標準エラー出力に表示されます。
+
+## Makefile によるビルド
+
+ソース `unified_codes.c` と `Makefile` を同じディレクトリに置き、次を実行します。
+
+```sh
+make
+```
+
+OpenMP を使わずにビルドする場合：
+
+```sh
+make clean
+make OPENMP=
+```
+
+実行ファイルを削除する場合：
+
+```sh
+make clean
+```
+
+## ファイル入出力（古典的な二元符号）
+
+ファイル入出力モードは、現状では `bch`、`golay`、`goppa`、`alt`、`rm`、`hadamard` に対応します。`grs`、`rank`、`product`、`concat` および AG 符号側は、このファイル入出力モードの対象外です。
+
+主なオプション：
+
+| オプション | 意味 |
+|---|---|
+| `--input FILE` | 入力ファイル |
+| `--input-format binary` | 入力を任意のバイナリデータとして読む（既定） |
+| `--input-format text` | `0` と `1` からなるビット列テキストとして読む。空白・改行は無視 |
+| `--no-errors` | 誤りを付加しない |
+| `--errors N` | 各符号ブロックに N 個のランダムなビット誤りを付加 |
+| `--output FILE` | 復号結果の出力先 |
+| `--output-format binary` | 復号結果をバイナリで保存 |
+| `--output-format text` | 復号結果を `0`/`1` のテキストで保存 |
+| `--output-format screen` | 復号結果を画面に表示（既定） |
+
+入力ビット列は符号の情報長 `k` ごとに分割されます。最後のブロックが `k` ビットに満たない場合は、符号化時に末尾を 0 で埋め、復号後は元のビット長に切り詰めます。バイナリ入力・出力では、各バイトの最上位ビットから順に処理します。
+
+### 例1：バイナリファイルを誤りなしで往復
+
+```sh
+./unified_codes --family classical --code golay \\
+  --input input.bin --input-format binary \\
+  --no-errors \\
+  --output decoded.bin --output-format binary
+cmp input.bin decoded.bin
+```
+
+`cmp` が何も表示せず終了コード 0 なら、入力と復号結果はバイト単位で一致しています。
+
+### 例2：バイナリファイルに各ブロック2個の誤りを付加
+
+```sh
+./unified_codes --family classical --code golay \\
+  --input input.bin --input-format binary \\
+  --errors 2 \\
+  --output decoded.bin --output-format binary
+cmp input.bin decoded.bin
+```
+
+### 例3：ビット列テキストを読み込んで復号結果をテキスト保存
+
+入力 `message.txt` の例：
+
+```text
+01010110
+11001010
+```
+
+実行：
+
+```sh
+./unified_codes --family classical --code bch --m 5 --t 2 \\
+  --input message.txt --input-format text \\
+  --errors 2 \\
+  --output decoded.txt --output-format text
+```
+
+### 例4：復号結果を画面に表示
+
+```sh
+./unified_codes --family classical --code rm --r 1 --m 5 \\
+  --input message.txt --input-format text \\
+  --no-errors --output-format screen
+```
+
+画面表示の場合は `--output FILE` を指定しません。
+
+### 例5：ほかの符号のパラメータを確認
+
+```sh
+./unified_codes --family classical --code golay --list
+./unified_codes --family classical --code bch --m 6 --t 3 --list
+./unified_codes --family classical --code rm --r 2 --m 6 --list
+```
+
+全オプションは次で確認できます。
+
+```sh
+./unified_codes --family classical --help
+./unified_codes --help-all
+```
+
+**注意：** ファイルモードで `--errors N` を指定すると、各ブロックに N 個の誤りをランダムに付加します。誤りなしが目的なら `--no-errors` を指定してください。`--erasures` と `-n` はファイルモードでは使用できません。
+
+## 積符号・Gabidulin符号の復号
+
+### 積符号 (`--code product`)
+
+積符号は、二つの二元符号 `C1` と `C2` の直積として構成します。配列の各行に `C1`、各列に `C2` の制約を課し、行方向・列方向の有界距離復号を交互に繰り返します。
+
+```sh
+# Golay x Golay。各試行で24個のランダムなビット誤りを加える
+./unified_codes --family classical --code product \
+  --c1 golay --c2 golay --errors 24 --iters 10 -n 500 123
+
+# BCH x Golay
+./unified_codes --family classical --code product \
+  --c1 bch:5:2 --c2 golay --errors 8 --iters 10 -n 100 123
+```
+
+`--iters` は行・列の復号を交互に行う最大スイープ回数です。最終段階で全行が `C1`、全列が `C2` の符号語になっているかを再検査します。これは反復復号であり、積符号の最小距離から得られる一般的な最尤復号保証半径内で常に成功することを意味しません。検査を通過しても、別の積符号語への誤訂正は理論上あり得ます。
+
+### Gabidulin符号 (`--code rank`)
+
+Gabidulin符号は `GF(2^m)` 上のランク距離符号です。長さ `n` は `n <= m` を満たす必要があります。復号器はシンドロームから線形化誤り位置多項式の係数を求め、その根空間とパリティ検査行列を用いて誤りを復元します。
+
+```sh
+# GF(2^8)、長さ6、次元2。ランク重み2の誤りを訂正
+./unified_codes --family classical --code rank \
+  --m 8 --len 6 --k 2 --errors 2 -n 1000 123
+
+# GF(2^12)、長さ12、次元6
+./unified_codes --family classical --code rank \
+  --m 12 --len 12 --k 6 --errors 3 -n 100 123
+```
+
+理論上の一意復号半径はランク重み `t = floor((n-k)/2)` です。`--errors` はハミング重みではなく、誤りベクトルのランク重みを指定します。訂正半径を超える誤りについては、復号失敗だけでなく誤訂正も起こり得ます。
+
+### 実装上の確認
+
+- 積符号：反復復号後に全行・全列の符号制約を検査します。
+- Gabidulin：シンドローム復号後に全パリティ検査式を再評価します。
+- これら二つの方式は現在、乱数による符号語生成・誤り付加・復号実験に対応します。汎用ファイル入出力にはまだ接続していません。
