@@ -1,0 +1,269 @@
+Flat profile:
+
+Each sample counts as 0.01 seconds.
+  %   cumulative   self              self     total           
+ time   seconds   seconds    calls   s/call   s/call  name    
+ 58.68      6.05     6.05    11940     0.00     0.00  fr_run
+ 30.75      9.22     3.17        1     3.17     3.20  resolve_and_store_fr_forney.constprop.0
+  8.24     10.07     0.85                             ag_frvote_run
+  1.55     10.23     0.16        1     0.16     6.21  feng_rao_reduce
+  0.53     10.29     0.06 16167000     0.00     0.00  mono_eval
+  0.10     10.30     0.01        1     0.01     0.04  poly_syndromes
+  0.10     10.31     0.01                             _init
+  0.05     10.31     0.01                             gpow
+  0.00     10.31     0.00  8106000     0.00     0.00  basis_value_at
+  0.00     10.31     0.00     7074     0.00     0.00  basis_syndrome
+  0.00     10.31     0.00     7074     0.00     0.00  synd1
+  0.00     10.31     0.00        8     0.00     0.00  newton_basis
+  0.00     10.31     0.00        8     0.00     0.00  pdiv_exact
+  0.00     10.31     0.00        3     0.00     0.00  pmod
+  0.00     10.31     0.00        2     0.00     0.00  split_edge
+  0.00     10.31     0.00        1     0.00     0.00  build_edges
+  0.00     10.31     0.00        1     0.00     0.00  enumerate_points
+  0.00     10.31     0.00        1     0.00     0.00  free_pivot_rows
+  0.00     10.31     0.00        1     0.00     0.00  make_errors
+  0.00     10.31     0.00        1     0.00     0.00  ne_inf_orbits
+  0.00     10.31     0.00        1     0.00     0.00  now
+  0.00     10.31     0.00        1     0.00     0.00  poly_setup_impl
+  0.00     10.31     0.00        1     0.00     0.00  print_limits
+  0.00     10.31     0.00        1     0.00     0.04  set_received
+  0.00     10.31     0.00        1     0.00     0.00  verify
+
+ %         the percentage of the total running time of the
+time       program used by this function.
+
+cumulative a running sum of the number of seconds accounted
+ seconds   for by this function and those listed above it.
+
+ self      the number of seconds accounted for by this
+seconds    function alone.  This is the major sort for this
+           listing.
+
+calls      the number of times this function was invoked, if
+           this function is profiled, else blank.
+
+ self      the average number of milliseconds spent in this
+ms/call    function per call, if this function is profiled,
+	   else blank.
+
+ total     the average number of milliseconds spent in this
+ms/call    function and its descendents per call, if this
+	   function is profiled, else blank.
+
+name       the name of the function.  This is the minor sort
+           for this listing. The index shows the location of
+	   the function in the gprof listing. If the index is
+	   in parenthesis it shows where it would appear in
+	   the gprof listing if it were to be printed.
+
+Copyright (C) 2012-2025 Free Software Foundation, Inc.
+
+Copying and distribution of this file, with or without modification,
+are permitted in any medium without royalty provided the copyright
+notice and this notice are preserved.
+
+		     Call graph (explanation follows)
+
+
+granularity: each sample hit covers 2 byte(s) for 0.10% of 10.31 seconds
+
+index % time    self  children    called     name
+                                                 <spontaneous>
+[1]     99.9    0.85    9.45                 ag_frvote_run [1]
+                0.16    6.05       1/1           feng_rao_reduce [2]
+                3.17    0.03       1/1           resolve_and_store_fr_forney.constprop.0 [4]
+                0.00    0.04       1/1           set_received [7]
+                0.00    0.00       8/8           newton_basis [13]
+                0.00    0.00       1/1           build_edges [17]
+                0.00    0.00       1/1           ne_inf_orbits [21]
+                0.00    0.00       1/1           enumerate_points [18]
+                0.00    0.00       1/1           print_limits [24]
+                0.00    0.00       1/1           poly_setup_impl [23]
+                0.00    0.00       1/1           now [22]
+                0.00    0.00       1/1           make_errors [20]
+                0.00    0.00       1/1           verify [25]
+-----------------------------------------------
+                0.16    6.05       1/1           ag_frvote_run [1]
+[2]     60.2    0.16    6.05       1         feng_rao_reduce [2]
+                6.05    0.00   11940/11940       fr_run [3]
+                0.00    0.00       1/1           free_pivot_rows [19]
+-----------------------------------------------
+                6.05    0.00   11940/11940       feng_rao_reduce [2]
+[3]     58.7    6.05    0.00   11940         fr_run [3]
+-----------------------------------------------
+                3.17    0.03       1/1           ag_frvote_run [1]
+[4]     31.0    3.17    0.03       1         resolve_and_store_fr_forney.constprop.0 [4]
+                0.03    0.00 8106000/16167000     mono_eval [5]
+                0.00    0.00 8106000/8106000     basis_value_at [10]
+                0.00    0.00    7074/7074        basis_syndrome [11]
+                0.00    0.00    7074/7074        synd1 [12]
+-----------------------------------------------
+                0.03    0.00 8061000/16167000     poly_syndromes [6]
+                0.03    0.00 8106000/16167000     resolve_and_store_fr_forney.constprop.0 [4]
+[5]      0.5    0.06    0.00 16167000         mono_eval [5]
+-----------------------------------------------
+                0.01    0.03       1/1           set_received [7]
+[6]      0.4    0.01    0.03       1         poly_syndromes [6]
+                0.03    0.00 8061000/16167000     mono_eval [5]
+-----------------------------------------------
+                0.00    0.04       1/1           ag_frvote_run [1]
+[7]      0.4    0.00    0.04       1         set_received [7]
+                0.01    0.03       1/1           poly_syndromes [6]
+-----------------------------------------------
+                                                 <spontaneous>
+[8]      0.1    0.01    0.00                 _init [8]
+-----------------------------------------------
+                                                 <spontaneous>
+[9]      0.0    0.01    0.00                 gpow [9]
+-----------------------------------------------
+                0.00    0.00 8106000/8106000     resolve_and_store_fr_forney.constprop.0 [4]
+[10]     0.0    0.00    0.00 8106000         basis_value_at [10]
+-----------------------------------------------
+                0.00    0.00    7074/7074        resolve_and_store_fr_forney.constprop.0 [4]
+[11]     0.0    0.00    0.00    7074         basis_syndrome [11]
+-----------------------------------------------
+                0.00    0.00    7074/7074        resolve_and_store_fr_forney.constprop.0 [4]
+[12]     0.0    0.00    0.00    7074         synd1 [12]
+-----------------------------------------------
+                0.00    0.00       8/8           ag_frvote_run [1]
+[13]     0.0    0.00    0.00       8         newton_basis [13]
+-----------------------------------------------
+                0.00    0.00       8/8           split_edge [16]
+[14]     0.0    0.00    0.00       8         pdiv_exact [14]
+-----------------------------------------------
+                0.00    0.00       3/3           split_edge [16]
+[15]     0.0    0.00    0.00       3         pmod [15]
+-----------------------------------------------
+                0.00    0.00       2/2           ne_inf_orbits [21]
+[16]     0.0    0.00    0.00       2         split_edge [16]
+                0.00    0.00       8/8           pdiv_exact [14]
+                0.00    0.00       3/3           pmod [15]
+-----------------------------------------------
+                0.00    0.00       1/1           ag_frvote_run [1]
+[17]     0.0    0.00    0.00       1         build_edges [17]
+-----------------------------------------------
+                0.00    0.00       1/1           ag_frvote_run [1]
+[18]     0.0    0.00    0.00       1         enumerate_points [18]
+-----------------------------------------------
+                0.00    0.00       1/1           feng_rao_reduce [2]
+[19]     0.0    0.00    0.00       1         free_pivot_rows [19]
+-----------------------------------------------
+                0.00    0.00       1/1           ag_frvote_run [1]
+[20]     0.0    0.00    0.00       1         make_errors [20]
+-----------------------------------------------
+                0.00    0.00       1/1           ag_frvote_run [1]
+[21]     0.0    0.00    0.00       1         ne_inf_orbits [21]
+                0.00    0.00       2/2           split_edge [16]
+-----------------------------------------------
+                0.00    0.00       1/1           ag_frvote_run [1]
+[22]     0.0    0.00    0.00       1         now [22]
+-----------------------------------------------
+                0.00    0.00       1/1           ag_frvote_run [1]
+[23]     0.0    0.00    0.00       1         poly_setup_impl [23]
+-----------------------------------------------
+                0.00    0.00       1/1           ag_frvote_run [1]
+[24]     0.0    0.00    0.00       1         print_limits [24]
+-----------------------------------------------
+                0.00    0.00       1/1           ag_frvote_run [1]
+[25]     0.0    0.00    0.00       1         verify [25]
+-----------------------------------------------
+
+ This table describes the call tree of the program, and was sorted by
+ the total amount of time spent in each function and its children.
+
+ Each entry in this table consists of several lines.  The line with the
+ index number at the left hand margin lists the current function.
+ The lines above it list the functions that called this function,
+ and the lines below it list the functions this one called.
+ This line lists:
+     index	A unique number given to each element of the table.
+		Index numbers are sorted numerically.
+		The index number is printed next to every function name so
+		it is easier to look up where the function is in the table.
+
+     % time	This is the percentage of the `total' time that was spent
+		in this function and its children.  Note that due to
+		different viewpoints, functions excluded by options, etc,
+		these numbers will NOT add up to 100%.
+
+     self	This is the total amount of time spent in this function.
+
+     children	This is the total amount of time propagated into this
+		function by its children.
+
+     called	This is the number of times the function was called.
+		If the function called itself recursively, the number
+		only includes non-recursive calls, and is followed by
+		a `+' and the number of recursive calls.
+
+     name	The name of the current function.  The index number is
+		printed after it.  If the function is a member of a
+		cycle, the cycle number is printed between the
+		function's name and the index number.
+
+
+ For the function's parents, the fields have the following meanings:
+
+     self	This is the amount of time that was propagated directly
+		from the function into this parent.
+
+     children	This is the amount of time that was propagated from
+		the function's children into this parent.
+
+     called	This is the number of times this parent called the
+		function `/' the total number of times the function
+		was called.  Recursive calls to the function are not
+		included in the number after the `/'.
+
+     name	This is the name of the parent.  The parent's index
+		number is printed after it.  If the parent is a
+		member of a cycle, the cycle number is printed between
+		the name and the index number.
+
+ If the parents of the function cannot be determined, the word
+ `<spontaneous>' is printed in the `name' field, and all the other
+ fields are blank.
+
+ For the function's children, the fields have the following meanings:
+
+     self	This is the amount of time that was propagated directly
+		from the child into the function.
+
+     children	This is the amount of time that was propagated from the
+		child's children to the function.
+
+     called	This is the number of times the function called
+		this child `/' the total number of times the child
+		was called.  Recursive calls by the child are not
+		listed in the number after the `/'.
+
+     name	This is the name of the child.  The child's index
+		number is printed after it.  If the child is a
+		member of a cycle, the cycle number is printed
+		between the name and the index number.
+
+ If there are any cycles (circles) in the call graph, there is an
+ entry for the cycle-as-a-whole.  This entry shows who called the
+ cycle (as parents) and the members of the cycle (as children.)
+ The `+' recursive calls entry shows the number of function calls that
+ were internal to the cycle, and the calls entry for each member shows,
+ for that member, how many times it was called from other members of
+ the cycle.
+
+Copyright (C) 2012-2025 Free Software Foundation, Inc.
+
+Copying and distribution of this file, with or without modification,
+are permitted in any medium without royalty provided the copyright
+notice and this notice are preserved.
+
+Index by function name
+
+   [8] _init                   [9] gpow                    [6] poly_syndromes
+   [1] ag_frvote_run          [20] make_errors            [24] print_limits
+  [11] basis_syndrome          [5] mono_eval               [4] resolve_and_store_fr_forney.constprop.0
+  [10] basis_value_at         [21] ne_inf_orbits           [7] set_received
+  [17] build_edges            [13] newton_basis           [16] split_edge
+  [18] enumerate_points       [22] now                    [12] synd1
+   [2] feng_rao_reduce        [14] pdiv_exact             [25] verify
+   [3] fr_run                 [15] pmod
+  [19] free_pivot_rows        [23] poly_setup_impl
