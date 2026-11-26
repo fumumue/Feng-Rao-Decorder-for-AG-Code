@@ -143,6 +143,11 @@ AG 符号は既定のファミリーです。
   --code grs --m 8 --len 255 --k 223 \
   --errors 10 --erasures 12
 ```
+### Alternant 符号
+
+```sh
+./unified_codes --code alt --m 8 --len 200 --t 10 --errors 10 -n 100
+```
 
 ### Gabidulin（rank-metric）符号
 
