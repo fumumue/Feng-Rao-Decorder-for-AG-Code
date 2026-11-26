@@ -1,43 +1,27 @@
-CC      ?= cc
-CFLAGS  ?= -O2 -std=gnu11 -Wall -Wextra -fopenmp
-LDLIBS  ?= -lm
+# Unified Codes build file
+# Usage:
+#   make                         build with OpenMP
+#   make OPENMP=                 build without OpenMP
+#   make clean                   remove generated executable
 
-all: ag_frvote libag_frvote.a external_caller
+CC       ?= cc
+CFLAGS   ?= -O2 -std=gnu11 -Wall -Wextra
+OPENMP   ?= -fopenmp
+LDLIBS   ?= -lm
+TARGET   := unified_codes
+SOURCE   := unified_codes.c
 
-noize:noizy.c
-	$(CC) $(CFLAGS) -o $@ $< $(LDLIBS)
+.PHONY: all clean help
 
-keri:fr_simd.c
-	$(CC) $(CFLAGS) -o $@ $< $(LDLIBS)
+all: $(TARGET)
 
-bbgs_kotter:bbgs_kotter.c
-	$(CC) $(CFLAGS) -o $@ $< $(LDLIBS)
-
-bbgs:bbgs.c
-	$(CC) $(CFLAGS) -o $@ $< $(LDLIBS)
-
-kotter: kotter.c
-	$(CC) $(CFLAGS) -o $@ $< $(LDLIBS)
-
-value: value.c
-	$(CC) $(CFLAGS) -o $@ $< $(LDLIBS)
-
-k2: bbgs_k.c
-	$(CC) $(CFLAGS) -o $@ $< $(LDLIBS)
-
-libag_frvote.a: ag_frvote_lib.o
-	ar rcs $@ $^
-
-ag_frvote_lib.o: noizy.c ag_frvote.h
-	$(CC) $(CFLAGS) -DAG_FRVOTE_NO_MAIN -c -o $@ keri.c
-
-external_caller: external_caller.c libag_frvote.a ag_frvote.h
-	$(CC) $(CFLAGS) -o $@ external_caller.c libag_frvote.a $(LDLIBS)
-
-test: all
-	./test_api.sh
+$(TARGET): $(SOURCE)
+	$(CC) $(CFLAGS) $(OPENMP) -o $@ $< $(LDFLAGS) $(LDLIBS)
 
 clean:
-	rm -f ag_frvote ag_frvote_lib.o libag_frvote.a external_caller
+	rm -f $(TARGET)
 
-.PHONY: all test clean
+help:
+	@echo 'make          : build unified_codes (OpenMP enabled)'
+	@echo 'make OPENMP=  : build without OpenMP'
+	@echo 'make clean   : remove the executable'
