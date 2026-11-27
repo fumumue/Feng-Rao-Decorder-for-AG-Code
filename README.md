@@ -80,7 +80,7 @@ $$
 さらに、誤り値を対角成分に持つ行列を
 
 $$
-D_e=\operatorname{diag}(e_1,\ldots,e_t)
+D_e=\mathrm{diag}(e_1,\ldots,e_t)
 $$
 
 とすれば、シンドローム行列は次のように表せる。
